@@ -1,0 +1,22 @@
+{
+  "name": "letsmath",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n web,server -c blue,magenta \"npm run dev -w @letsmath/web\" \"npm run dev -w @letsmath/server\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:api": "npm run check:api -w @letsmath/server"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}
