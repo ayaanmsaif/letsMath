@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  --color-board: #fafaf9;
+  --color-tutor: #7c3aed;
+  --color-mistake: #f0625a;
+  --color-correct: #16a34a;
+  --color-attention: #f59e0b;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-board font-sans text-stone-900 antialiased;
+  overscroll-behavior: none;
+}
+
+/* "Tutor is looking" sweep over the board. */
+.looking-sweep {
+  background: linear-gradient(100deg, transparent 35%, rgb(124 58 237 / 0.07) 50%, transparent 65%);
+  background-size: 250% 100%;
+  box-shadow: inset 0 0 0 2px rgb(124 58 237 / 0.22);
+  animation: looking-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes looking-sweep {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .looking-sweep {
+    animation: none;
+  }
+}
+
+/* Tutor replies. */
+.tutor-markdown > * + * {
+  margin-top: 0.6em;
+}
+.tutor-markdown ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.tutor-markdown ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+.tutor-markdown strong {
+  font-weight: 600;
+  color: var(--color-stone-900);
+}
+.tutor-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-stone-100);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+.tutor-markdown .katex {
+  font-size: 1.08em;
+}
+.tutor-markdown .katex-display {
+  margin: 0.5em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
