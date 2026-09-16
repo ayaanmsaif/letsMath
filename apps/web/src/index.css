@@ -45,6 +45,70 @@ body {
   }
 }
 
+/* The tutor's annotations draw themselves on, like a pen. */
+.tutor-draw-on polyline,
+.tutor-draw-on polygon,
+.tutor-draw-on line,
+.tutor-draw-on path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: tutor-draw 560ms ease-out forwards;
+  animation-delay: inherit;
+}
+
+.tutor-draw-on text,
+.tutor-draw-on svg {
+  animation: tutor-fade 420ms ease-out both;
+  animation-delay: inherit;
+}
+
+@keyframes tutor-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* A drawing glows when its chip is clicked in the chat. */
+.tutor-pulse {
+  animation: tutor-pulse 900ms ease-out;
+}
+
+@keyframes tutor-pulse {
+  0%,
+  100% {
+    filter: none;
+  }
+  35% {
+    filter: drop-shadow(0 0 7px rgb(124 58 237 / 0.6));
+  }
+}
+
+@keyframes tutor-fade {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tutor-draw-on polyline,
+  .tutor-draw-on polygon,
+  .tutor-draw-on line,
+  .tutor-draw-on path {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    animation: tutor-fade 200ms ease-out both;
+  }
+  .tutor-draw-on text,
+  .tutor-draw-on svg {
+    animation-duration: 200ms;
+  }
+}
+
 /* Tutor replies. */
 .tutor-markdown > * + * {
   margin-top: 0.6em;

@@ -9,7 +9,8 @@ if (existsSync(envPath)) process.loadEnvFile(envPath);
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   tutorModel: process.env.TUTOR_MODEL ?? "claude-sonnet-5",
-  tutorEffort: process.env.TUTOR_EFFORT ?? "low",
+  /** How much thinking the tutor does before replying: low | medium | high. */
+  tutorEffort: process.env.TUTOR_EFFORT ?? "medium",
   watchModel: process.env.WATCH_MODEL ?? "claude-haiku-4-5",
   sessionBudgetUsd: Number(process.env.SESSION_BUDGET_USD ?? 1),
   /** Hard cap on total development/testing spend across all sessions (USD). */

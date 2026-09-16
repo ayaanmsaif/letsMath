@@ -18,10 +18,10 @@ function arrowHead(shape: LineShape, width: number): string {
 }
 
 export const ShapeView = memo(function ShapeView({ shape, dimmed = false }: { shape: Shape; dimmed?: boolean }) {
-  const opacity = dimmed ? 0.2 : undefined;
+  const opacity = dimmed ? 0.2 : shape.opacity;
   const stroke = {
     stroke: shape.color,
-    strokeWidth: lineWidth(shape.size),
+    strokeWidth: shape.strokeWidth ?? lineWidth(shape.size),
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
     fill: "none",
@@ -52,7 +52,12 @@ export const ShapeView = memo(function ShapeView({ shape, dimmed = false }: { sh
       );
     case "polygon": {
       const points = shape.points.map((p) => p.join(",")).join(" ");
-      return shape.closed ? <polygon points={points} {...stroke} /> : <polyline points={points} {...stroke} />;
+      // pathLength lets the draw-on animation treat any length as 0→1.
+      return shape.closed ? (
+        <polygon points={points} pathLength={1} {...stroke} />
+      ) : (
+        <polyline points={points} pathLength={1} {...stroke} />
+      );
     }
     case "text":
       return (

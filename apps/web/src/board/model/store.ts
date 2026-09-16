@@ -71,8 +71,8 @@ interface BoardState {
 
   /** Reserve an id, number, and stacking order for a new shape. */
   allocate: () => Pick<Shape, "id" | "num" | "z" | "createdAt">;
-  /** Apply a patch and record it as one undo step. */
-  commit: (patch: Patch, label: string, author?: Author) => void;
+  /** Apply a patch and record it as one undo step; a shared mergeKey joins steps. */
+  commit: (patch: Patch, label: string, author?: Author, mergeKey?: string) => void;
   /** Change shapes without recording history (live drags); pair with record(). */
   setShapesTransient: (shapes: Shape[]) => void;
   /** Record a patch whose changes are already applied. */
@@ -119,11 +119,11 @@ export const useBoard = create<BoardState>()((set, get) => ({
     return { id: `s${nextNum}`, num: nextNum, z: nextZ, createdAt: Date.now() };
   },
 
-  commit: (patch, label, author = "student") => {
+  commit: (patch, label, author = "student", mergeKey) => {
     const { shapes, history } = get();
     set({
       shapes: applyPatch(shapes, patch, "forward"),
-      history: pushEntry(history, { patch, label, author }),
+      history: pushEntry(history, { patch, label, author, mergeKey }),
     });
   },
 

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { PerfMeter } from "../dev/PerfMeter";
+import { TutorCursor } from "./ai/TutorCursor";
 import { installShortcuts } from "./input/shortcuts";
 import { EquationEditor } from "./math/EquationEditor";
 import { installAutosave, loadSavedBoard } from "./model/persist";
@@ -46,6 +47,7 @@ export function BoardView() {
       </div>
       <EquationEditor />
       <LookingOverlay />
+      <TutorCursor />
       {debug && <PerfMeter />}
     </Board>
   );

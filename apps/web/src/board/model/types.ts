@@ -15,6 +15,10 @@ interface ShapeBase {
   color: string;
   size: StrokeSize;
   createdAt: number;
+  /** Overrides the width implied by `size`; used by the tutor's annotations. */
+  strokeWidth?: number;
+  /** Overrides the default opacity; used for highlighter-style tutor marks. */
+  opacity?: number;
 }
 
 export interface InkShape extends ShapeBase {

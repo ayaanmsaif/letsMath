@@ -9,6 +9,11 @@ export interface HistoryEntry {
   patch: Patch;
   label: string;
   author: Author;
+  /**
+   * Entries sharing a key merge into one step, so a turn's annotations undo
+   * together even though they're drawn one at a time.
+   */
+  mergeKey?: string;
 }
 
 export interface History {
@@ -46,6 +51,17 @@ export function updatePatch(pairs: [before: Shape, after: Shape][]): Patch {
 
 export function pushEntry(history: History, entry: HistoryEntry): History {
   if (isEmptyPatch(entry.patch)) return history;
+
+  const previous = history.undo.at(-1);
+  if (entry.mergeKey && previous?.mergeKey === entry.mergeKey) {
+    // Keep the oldest "before" for each shape so undo returns to the start of the batch.
+    const merged: Patch = { ...entry.patch, ...previous.patch };
+    for (const [id, [, after]] of Object.entries(entry.patch)) {
+      merged[id] = [previous.patch[id]?.[0] ?? null, after];
+    }
+    return { undo: [...history.undo.slice(0, -1), { ...previous, patch: merged }], redo: [] };
+  }
+
   return { undo: [...history.undo, entry].slice(-HISTORY_LIMIT), redo: [] };
 }
 

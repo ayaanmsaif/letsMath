@@ -1,6 +1,7 @@
 import type { TurnTrigger } from "@letsmath/shared";
-import { ArrowUp, ChevronDown, CircleCheck, LifeBuoy, Lightbulb, PanelLeftClose, SquarePen } from "lucide-react";
+import { ArrowUp, ChevronDown, CircleCheck, LifeBuoy, Lightbulb, PanelLeftClose, Pencil, SquarePen } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { focusAnnotation } from "../board/ai/applyOps";
 import { useChat, type ChatMessage } from "./store";
 import { TutorMarkdown } from "./TutorMarkdown";
 
@@ -146,6 +147,22 @@ function MessageView({ message }: { message: ChatMessage }) {
   return (
     <div className="text-[14px] leading-relaxed text-stone-800">
       {message.text ? <TutorMarkdown text={message.text} /> : message.status === "streaming" ? <Pending /> : null}
+      {message.drawings && message.drawings.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {message.drawings.map((drawing) => (
+            <button
+              key={drawing.id}
+              type="button"
+              title="Show me on the board"
+              onClick={() => focusAnnotation(drawing.id)}
+              className="flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs text-violet-700 transition-colors hover:bg-violet-100"
+            >
+              <Pencil className="size-3" />
+              {drawing.label}
+            </button>
+          ))}
+        </div>
+      )}
       {message.status === "error" && <p className="mt-1 text-[13px] text-red-600">{message.error}</p>}
       {(debug || message.mock) && <MessageMeta message={message} />}
     </div>
@@ -175,6 +192,8 @@ function MessageMeta({ message }: { message: ChatMessage }) {
         <span>
           {u.model} · {u.inputTokens.toLocaleString()} in · {u.cacheReadTokens.toLocaleString()} cache read ·{" "}
           {u.cacheWriteTokens.toLocaleString()} cache write · {u.outputTokens.toLocaleString()} out · ${u.costUsd.toFixed(4)}
+          {u.firstWordMs !== undefined && ` · ${(u.firstWordMs / 1000).toFixed(1)}s to first word`}
+          {u.totalMs !== undefined && ` · ${(u.totalMs / 1000).toFixed(1)}s total`}
         </span>
       )}
     </p>
