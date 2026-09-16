@@ -73,3 +73,52 @@ describe("history", () => {
     expect(redo({}, emptyHistory())).toBeNull();
   });
 });
+
+// The tutor draws one mark at a time, but a turn should undo as a single step.
+describe("merging steps", () => {
+  const second: RectShape = { ...rect, id: "r2", num: 2 };
+
+  it("folds entries sharing a merge key into one undoable step", () => {
+    let shapes: Shapes = {};
+    let history = emptyHistory();
+    for (const shape of [rect, second]) {
+      const patch = addPatch([shape]);
+      shapes = applyPatch(shapes, patch, "forward");
+      history = pushEntry(history, { patch, label: "tutor circle", author: "tutor", mergeKey: "turn-1" });
+    }
+    expect(history.undo).toHaveLength(1);
+
+    const undone = undo(shapes, history)!;
+    expect(undone.shapes).toEqual({});
+  });
+
+  it("keeps different turns separate", () => {
+    let history = pushEntry(emptyHistory(), { patch: addPatch([rect]), label: "a", author: "tutor", mergeKey: "turn-1" });
+    history = pushEntry(history, { patch: addPatch([second]), label: "b", author: "tutor", mergeKey: "turn-2" });
+    expect(history.undo).toHaveLength(2);
+  });
+
+  it("does not merge steps without a key", () => {
+    let history = pushEntry(emptyHistory(), { patch: addPatch([rect]), label: "a", author: "student" });
+    history = pushEntry(history, { patch: addPatch([second]), label: "b", author: "student" });
+    expect(history.undo).toHaveLength(2);
+  });
+
+  it("undoes to the state before the whole batch when a shape changes twice", () => {
+    const moved = { ...rect, x: 50 };
+    const movedAgain = { ...rect, x: 90 };
+    let shapes: Shapes = { r1: rect };
+    let history = emptyHistory();
+
+    for (const [before, after] of [
+      [rect, moved],
+      [moved, movedAgain],
+    ] as [RectShape, RectShape][]) {
+      const patch = updatePatch([[before, after]]);
+      shapes = applyPatch(shapes, patch, "forward");
+      history = pushEntry(history, { patch, label: "tutor move", author: "tutor", mergeKey: "turn-1" });
+    }
+    expect(history.undo).toHaveLength(1);
+    expect(undo(shapes, history)!.shapes.r1).toBe(rect);
+  });
+});

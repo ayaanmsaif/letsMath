@@ -37,11 +37,17 @@ interface DraftState {
   equation: { x: number; y: number; id: string | null; latex: string } | null;
   /** Cursor override from the active tool's hover state (e.g. resize arrows). */
   cursor: string | null;
+  /** Shape ids briefly glowing, e.g. after clicking a drawing chip in the chat. */
+  pulsing: string[];
+  /** Where the tutor's pen is, in world units, while it draws. */
+  tutorCursor: [number, number] | null;
   set: (partial: Partial<Omit<DraftState, "set">>) => void;
 }
 
 export const useDraft = create<DraftState>()((set) => ({
   cursor: null,
+  pulsing: [],
+  tutorCursor: null,
   ink: null,
   shape: null,
   marquee: null,

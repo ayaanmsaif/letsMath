@@ -1,7 +1,17 @@
-import type { TurnTrigger, TurnUsage } from "@letsmath/shared";
+import type { ResolvedOp, TurnTrigger, TurnUsage } from "@letsmath/shared";
 import { create } from "zustand";
+import { applyOp, forgetAnnotations } from "../board/ai/applyOps";
+import { useDraft } from "../board/model/draft";
 import { captureSnapshot, resetSnapshotMemory } from "../board/snapshot/snapshot";
 import { readEvents } from "./stream";
+import { describeDrawings } from "./summary";
+
+/** A drawing the tutor made during a reply, shown as a chip under it. */
+export interface Drawing {
+  id: string;
+  label: string;
+  kind: ResolvedOp["kind"];
+}
 
 export interface ChatMessage {
   id: string;
@@ -11,7 +21,19 @@ export interface ChatMessage {
   error?: string;
   usage?: TurnUsage;
   mock?: boolean;
+  drawings?: Drawing[];
 }
+
+const DRAWING_LABELS: Record<ResolvedOp["kind"], string> = {
+  circle: "circled your working",
+  highlight: "highlighted a line",
+  underline: "underlined a line",
+  mark: "marked your work",
+  arrow: "drew an arrow",
+  angle_arc: "marked an angle",
+  write: "wrote on the board",
+  erase: "cleared its marks",
+};
 
 /** What the tutor was last shown, for the dev inspector. */
 export interface LastLook {
@@ -87,11 +109,19 @@ export const useChat = create<ChatState>()((set, get) => ({
       let reply = "";
       let delivered = true;
       let finished = false;
+      const drawings: Drawing[] = [];
       for await (const event of readEvents(res.body)) {
         if (event.type === "text") {
           reply += event.text;
           set({ looking: false });
           update({ text: reply });
+        } else if (event.type === "op") {
+          // Draw it straight away; all of a turn's marks undo together.
+          void applyOp(event.op, tutor.id);
+          if (event.op.kind !== "erase") {
+            drawings.push({ id: event.op.id, label: DRAWING_LABELS[event.op.kind], kind: event.op.kind });
+            update({ drawings: [...drawings] });
+          }
         } else if (event.type === "usage") {
           update({ usage: event.usage });
           set({ spend: { spentUsd: event.usage.spentUsd, budgetUsd: event.usage.budgetUsd } });
@@ -103,7 +133,10 @@ export const useChat = create<ChatState>()((set, get) => ({
           finished = true;
           if (delivered) {
             pending?.commit();
-            update({ status: get().messages.find((m) => m.id === tutor.id)?.status === "error" ? "error" : "done", mock: event.mock });
+            const failed = get().messages.find((m) => m.id === tutor.id)?.status === "error";
+            // The tutor sometimes draws without saying anything; describe it rather than show a blank reply.
+            const text = reply.trim() ? reply : describeDrawings(drawings.map((d) => d.kind));
+            update({ text, status: failed ? "error" : "done", mock: event.mock });
           }
         }
       }
@@ -112,12 +145,15 @@ export const useChat = create<ChatState>()((set, get) => ({
       update({ status: "error", error: err instanceof Error ? err.message : "Something went wrong." });
     } finally {
       set({ busy: false, looking: false });
+      // Let the pen rest on the last mark for a moment, then put it away.
+      window.setTimeout(() => useDraft.getState().set({ tutorCursor: null }), 900);
       if (!mock) void get().refreshUsage();
     }
   },
 
   newSession: () => {
     resetSnapshotMemory();
+    forgetAnnotations();
     set({ sessionId: crypto.randomUUID(), messages: [], lastLook: null });
   },
 

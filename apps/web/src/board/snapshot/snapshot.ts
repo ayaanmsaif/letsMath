@@ -59,7 +59,16 @@ export async function captureSnapshot(): Promise<PendingSnapshot | null> {
   const digest = buildDigest(sortedShapes(shapes), frame, seen);
 
   return {
-    snapshot: { data, mediaType, width, height, origin: [box.minX, box.minY], scale: frame.scale, digest: digest.text },
+    snapshot: {
+      data,
+      mediaType,
+      width,
+      height,
+      origin: [box.minX, box.minY],
+      scale: frame.scale,
+      digest: digest.text,
+      items: digest.items,
+    },
     commit: () => {
       seen = digest.seen;
       lastSent = { shapes, camera };

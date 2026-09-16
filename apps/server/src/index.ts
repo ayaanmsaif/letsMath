@@ -23,6 +23,26 @@ const turnRequest = z.object({
       origin: z.tuple([z.number(), z.number()]),
       scale: z.number().positive(),
       digest: z.string().max(20_000),
+      items: z
+        .array(
+          z.object({
+            id: z.string().max(40),
+            kind: z.enum(["handwriting", "shape", "annotation"]),
+            box: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+            corners: z.array(z.tuple([z.number(), z.number()])).max(64).optional(),
+            sides: z
+              .array(
+                z.object({
+                  id: z.string().max(8),
+                  a: z.tuple([z.number(), z.number()]),
+                  b: z.tuple([z.number(), z.number()]),
+                }),
+              )
+              .max(64)
+              .optional(),
+          }),
+        )
+        .max(500),
     })
     .nullable(),
   mock: z.boolean().optional(),
@@ -57,6 +77,7 @@ app.get("/api/health", (c) =>
   c.json({
     ok: true,
     tutorModel: config.tutorModel,
+    tutorEffort: config.tutorEffort,
     watchModel: config.watchModel,
     apiKeyInEnv: config.apiKeyInEnv,
   }),

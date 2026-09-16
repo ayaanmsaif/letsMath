@@ -119,6 +119,15 @@ The AI describes *what* the diagram is, in maths units with named points. The sh
 - **Rendering:** each path becomes a tutor shape (animated draw-on, selectable), and `text` becomes our text or LaTeX shapes.
 - **Use:** real-world sketches (ladders, ramps, clocks, bearings, towers and angles of elevation), charts, and icons.
 
+### 4c-i. What strict tool schemas allow (learned in M3)
+
+The API refuses some JSON Schema constraints in strict tools, and every drawing tool is rejected if any one of them is wrong:
+- `minItems` may only be 0 or 1, so **points and boxes must be plain number arrays**, not fixed-length tuples;
+- `maxItems` isn't supported at all, so list lengths are capped on the server instead;
+- every property must be required, with unused ones nullable.
+
+Lengths are therefore checked in `resolve.ts`, which turns a wrong one into a clear message the tutor sees and can correct. `npm run check:tools` validates every schema against the API for free (token counting), and a unit test pins both rules. M4's `draw_diagram` and `draw_svg` schemas must follow the same rules.
+
 ### 4d. Housekeeping
 - `erase_drawings {ids | "all"}` removes the tutor's own annotations and diagrams.
 - `look_closer {bbox}` requests a zoom crop (round-trip).
@@ -217,8 +226,10 @@ Feel is a requirement. Every target below is measured on real devices, and M1 an
 | **First drawing starts** | About **3s** after asking. | `eager_input_streaming`. Each op is applied the moment its tool call finishes, and the tutor cursor starts moving as soon as the first op arrives. **Tune if missed:** shorter lead-in sentence, effort, model. |
 | **Never blocking** | The student can keep writing, panning, and undoing while the tutor draws. Nothing the AI does locks the board. | Tutor animations live on their own layer. Ops commit to the scene immediately (the animation is visual only). Student input always has priority. |
 
+**Where we are (measured):** M2 hit 1.6s to first word. With the drawing tools attached in M3 that rose to **15.7s**, with no thinking tokens used, so the cause isn't the model reasoning. Every turn now records its own timings (server log and the dev usage line) so the next real turns show where the time goes; closing this is part of M4's polish pass.
+
 **How we measure:**
-- **Timings:** the inspector shows, for every turn, time to the "looking" indicator, first word, first drawing, and done, plus a median over the session.
+- **Timings:** the server logs time to first word and to done for every turn, and the dev usage line shows the same. The inspector will add the "looking" indicator and first drawing, plus a median over the session.
 - **Frame-time meter:** shown with `?debug=1` while drawing and panning, plus a **stress-test button** that fills the board with 2,000 sample strokes.
 - **Test devices:**
   - iPad with Apple Pencil (Safari);
