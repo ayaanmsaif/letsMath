@@ -41,6 +41,9 @@ const blankSpec = {
   markedPoints: [],
   axes: [],
   plots: [],
+  constructions: [],
+  circles: [],
+  arcs: [],
   near: "",
   width: 360,
   caption: "",
@@ -93,6 +96,42 @@ const mockGraph = {
   caption: "sin and cos from -2pi to 2pi",
 };
 
+/** The unit circle with 30° marked, its point built rather than calculated, for exercising circles for free. */
+const mockUnitCircle = {
+  ...blankSpec,
+  axes: [
+    {
+      xMin: -1.5,
+      xMax: 1.5,
+      yMin: -1.5,
+      yMax: 1.5,
+      xLabel: "x",
+      yLabel: "y",
+      xStep: 0.5,
+      yStep: 0.5,
+      piTicks: false,
+      grid: false,
+      equalScale: true,
+    },
+  ],
+  points: [
+    { name: "O", x: 0, y: 0 },
+    { name: "A", x: 1, y: 0 },
+  ],
+  constructions: [
+    { name: "P", kind: "polar", of: ["O"], angle: 30, distance: 1 },
+    { name: "F", kind: "foot", of: ["P", "O", "A"], angle: 0, distance: 0 },
+  ],
+  circles: [{ centre: "O", through: "A", radius: 0, attention: false }],
+  segments: [
+    { from: "O", to: "P", dashed: false },
+    { from: "P", to: "F", dashed: true },
+  ],
+  angles: [{ at: "O", from: "A", to: "P", text: "30^{\\circ}", rightAngle: false }],
+  markedPoints: [{ at: "P", text: "\\left(\\frac{\\sqrt{3}}{2}, \\frac{1}{2}\\right)", dot: true }],
+  width: 400,
+};
+
 /** Scripted drawings, so the board's annotation rendering can be built for free. */
 function opsFor(request: TurnRequest, session: TutorSession): ResolvedOp[] {
   const mapping = session.mapping;
@@ -106,7 +145,12 @@ function opsFor(request: TurnRequest, session: TutorSession): ResolvedOp[] {
   const ops: ResolvedOp[] = [];
 
   try {
-    // Asking for a graph gets one, whichever button it came from.
+    // Asking for a circle or a graph gets one, whichever button it came from.
+    // Circles first: a unit-circle request often mentions sin and cos too.
+    if (/circle/i.test(request.text)) {
+      ops.push(resolve("draw_diagram", { ...mockUnitCircle, near: target.id }));
+      return ops;
+    }
     if (/graph|plot|sketch|sin|cos/i.test(request.text)) {
       ops.push(resolve("draw_diagram", { ...mockGraph, near: target.id }));
       return ops;

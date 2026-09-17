@@ -103,6 +103,8 @@ function topLeftFor(anchor: LabelAnchor, at: Pt, w: number, h: number): Pt {
       return [at[0] - w / 2, at[1]];
     case "bottom-centre":
       return [at[0] - w / 2, at[1] - h];
+    case "middle-left":
+      return [at[0], at[1] - h / 2];
     case "middle-right":
       return [at[0] - w, at[1] - h / 2];
     default:

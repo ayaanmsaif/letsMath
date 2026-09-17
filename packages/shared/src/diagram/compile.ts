@@ -5,9 +5,10 @@
 // works out every line, arc and label position, so nothing depends on the
 // model guessing pixels.
 import { compileExpression, ExpressionError, samplePlot } from "./plot";
+import { DiagramError, len, norm, resolvePoints, sub, type Vec2 } from "./points";
 import type { DiagramAxes, DiagramSpec } from "./schema";
 
-export type Vec2 = [number, number];
+export { DiagramError, type Vec2 } from "./points";
 
 /** A drawn piece of a diagram, in world units, addressable as d1.AB and so on. */
 export type DiagramPart =
@@ -19,15 +20,13 @@ export type DiagramPart =
  * text — MathJax runs in the browser — so it names the point it means and the
  * renderer, which can measure, does the positioning.
  */
-export type LabelAnchor = "top-left" | "top-centre" | "middle-right" | "bottom-centre";
+export type LabelAnchor = "top-left" | "top-centre" | "middle-left" | "middle-right" | "bottom-centre";
 
 export interface CompiledDiagram {
   parts: DiagramPart[];
   /** The box the diagram occupies in world units: [x1, y1, x2, y2]. */
   box: [number, number, number, number];
 }
-
-export class DiagramError extends Error {}
 
 /** Where the diagram should go, in world units. */
 export interface DiagramPlacement {
@@ -38,16 +37,19 @@ export interface DiagramPlacement {
 }
 
 const ANGLE_STEPS = 18;
+const CIRCLE_STEPS = 72;
 /** How far an angle's arc sits from its corner, as a fraction of the shorter arm. */
 const ARC_FRACTION = 0.28;
 const MAX_ARC = 0.18;
 /** How far labels sit outside the figure, as a fraction of its size. */
 const LABEL_GAP = 0.09;
+/** A marked point's dot, as a fraction of the figure's size. */
+const DOT = 0.014;
 /** Slack left around everything, so label text doesn't touch the edge. */
 const MARGIN = 0.1;
 
 /** Room kept around a graph for its tick numbers and axis names, in world units. */
-const GRAPH_PAD = { left: 42, right: 22, top: 22, bottom: 34 };
+const GRAPH_PAD = { left: 42, right: 22, top: 22, bottom: 42 };
 const TICK = 5;
 /**
  * Rough size of a small label. Measuring text needs a browser, and this runs on
@@ -57,12 +59,6 @@ const CHAR_W = 9;
 const LINE_H = 22;
 const MAX_TICKS = 24;
 
-const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
-const len = (v: Vec2) => Math.hypot(v[0], v[1]);
-const norm = (v: Vec2): Vec2 => {
-  const l = len(v) || 1;
-  return [v[0] / l, v[1] / l];
-};
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 
 /** Maths coordinates to world coordinates, for a graph's frame. */
@@ -70,6 +66,26 @@ interface Frame {
   world: (p: Vec2) => Vec2;
   scaleX: number;
   scaleY: number;
+}
+
+/** Points around a circle, from an angle through a sweep, both in radians. */
+function around(middle: Vec2, radius: number, from: number, sweep: number, steps: number): Vec2[] {
+  return Array.from({ length: steps + 1 }, (_, i) => {
+    const turn = from + (sweep * i) / steps;
+    return [middle[0] + Math.cos(turn) * radius, middle[1] + Math.sin(turn) * radius] as Vec2;
+  });
+}
+
+/**
+ * The anchor that keeps a label's text on the far side of its point from what
+ * it labels. Text that always hung to the right ran back across a left-hand
+ * side, and across the circle from a point on its left.
+ *
+ * @param direction Which way the label sits from its point, in maths coordinates (y up).
+ */
+function anchorAway(direction: Vec2): LabelAnchor {
+  if (Math.abs(direction[0]) >= Math.abs(direction[1])) return direction[0] >= 0 ? "middle-left" : "middle-right";
+  return direction[1] >= 0 ? "bottom-centre" : "top-centre";
 }
 
 /**
@@ -201,6 +217,17 @@ function buildGraph(spec: DiagramSpec, axes: DiagramAxes, frame: Frame, placemen
   stroke("xaxis", [frame.world([axes.xMin, originY]), frame.world([axes.xMax, originY])]);
   stroke("yaxis", [frame.world([originX, axes.yMin]), frame.world([originX, axes.yMax])]);
 
+  // An axis running through the middle of the plot has curves crossing it, and
+  // numbers written beside it get struck through — a unit circle crosses the
+  // x-axis exactly at the 1 and -1 ticks. So numbers go in the margins, the way
+  // graph paper reads, while the ticks themselves stay on the axes.
+  const numbersBelow = Math.max(frame.world([0, originY])[1] + TICK, frame.world([0, axes.yMin])[1]) + 4;
+  const numbersAt = Math.min(frame.world([originX, 0])[0] - TICK, frame.world([axes.xMin, 0])[0]) - 6;
+
+  // The lowest y number and the first x number meet in the bottom-left corner;
+  // when both would be written, the y one stays.
+  const cornerTaken = yTicks.some((v) => Math.abs(v - axes.yMin) < 1e-9 && Math.abs(v - originY) >= 1e-9);
+
   for (const [i, value] of xTicks.entries()) {
     // Where the axes cross, one tick would be written over the other.
     if (Math.abs(value - originX) < 1e-9) continue;
@@ -209,15 +236,11 @@ function buildGraph(spec: DiagramSpec, axes: DiagramAxes, frame: Frame, placemen
       [x, y - TICK],
       [x, y + TICK],
     ]);
+    if (cornerTaken && Math.abs(value - axes.xMin) < 1e-9) continue;
     // Centred on the tick by the renderer: a pi fraction is many characters but
     // few glyphs, so shifting it by character count throws it onto its neighbour.
-    label(`xnum${i + 1}`, [x, y + TICK + 4], formatTick(value, axes.piTicks), false, "top-centre");
+    label(`xnum${i + 1}`, [x, numbersBelow], formatTick(value, axes.piTicks), false, "top-centre");
   }
-
-  // When the domain straddles zero the y-axis runs up the middle of the plot, and
-  // numbers written beside it would sit on the curves. They go in the left margin
-  // instead, the way graph paper reads, while the ticks stay on the axis.
-  const numbersAt = Math.min(frame.world([originX, 0])[0] - TICK, frame.world([axes.xMin, 0])[0]) - 6;
 
   for (const [i, value] of yTicks.entries()) {
     if (Math.abs(value - originY) < 1e-9) continue;
@@ -309,13 +332,33 @@ function buildGraph(spec: DiagramSpec, axes: DiagramAxes, frame: Frame, placemen
   return parts;
 }
 
+/**
+ * The box a diagram covers, its writing included. A label's text is estimated
+ * from its anchor, since real text is only measured once rendered — but leaving
+ * the text out let a long coordinate label reach well past the space the board
+ * had kept clear for the diagram.
+ */
 function boxOf(parts: DiagramPart[]): [number, number, number, number] {
-  const all = parts.flatMap((part) => (part.kind === "stroke" ? part.points : [part.at]));
+  const corners = parts.flatMap((part): Vec2[] => {
+    if (part.kind === "stroke") return part.points;
+    const width = estimateWidth(part.text);
+    // A stacked fraction stands about half as tall again as a line of text.
+    const height = /\\frac/.test(part.text) ? LINE_H * 1.6 : LINE_H;
+    const [x, y] = part.at;
+    const centred = part.anchor === "top-centre" || part.anchor === "bottom-centre";
+    const left = centred ? x - width / 2 : part.anchor === "middle-right" ? x - width : x;
+    const middle = part.anchor === "middle-left" || part.anchor === "middle-right";
+    const top = part.anchor === "bottom-centre" ? y - height : middle ? y - height / 2 : y;
+    return [
+      [left, top],
+      [left + width, top + height],
+    ];
+  });
   return [
-    Math.min(...all.map((p) => p[0])),
-    Math.min(...all.map((p) => p[1])),
-    Math.max(...all.map((p) => p[0])),
-    Math.max(...all.map((p) => p[1])),
+    Math.min(...corners.map((p) => p[0])),
+    Math.min(...corners.map((p) => p[1])),
+    Math.max(...corners.map((p) => p[0])),
+    Math.max(...corners.map((p) => p[1])),
   ];
 }
 
@@ -331,13 +374,10 @@ function boxOf(parts: DiagramPart[]): [number, number, number, number] {
  */
 export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, prefix: string): CompiledDiagram {
   const axes = spec.axes[0];
-  const points = new Map<string, Vec2>();
-  for (const p of spec.points) {
-    if (points.has(p.name)) throw new DiagramError(`Point ${p.name} is defined twice.`);
-    points.set(p.name, [p.x, p.y]);
-  }
   // Curves without axes come first: it's the more useful thing to be told.
   if (spec.plots.length > 0 && !axes) throw new DiagramError("A plot needs axes to sit on. Add them.");
+
+  const points = resolvePoints(spec.points, spec.constructions);
   if (points.size === 0 && !axes) throw new DiagramError("A diagram needs at least one point.");
 
   const at = (name: string, role: string): Vec2 => {
@@ -346,21 +386,67 @@ export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, p
     return point;
   };
 
-  const xs = [...points.values()].map((p) => p[0]);
-  const ys = [...points.values()].map((p) => p[1]);
-  const figureSize =
-    points.size > 0 ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1 : 1;
+  const circles = spec.circles.map((circle) => {
+    const middle = at(circle.centre, "circle");
+    const radius = circle.through ? len(sub(at(circle.through, "circle"), middle)) : circle.radius;
+    if (!(radius > 0)) {
+      throw new DiagramError(
+        `The circle centred on ${circle.centre} needs a point on it in through, or a radius above 0.`,
+      );
+    }
+    return { ...circle, middle, radius };
+  });
+  const arcs = spec.arcs.map((arc) => {
+    const middle = at(arc.centre, "arc");
+    const start = sub(at(arc.from, "arc"), middle);
+    const end = sub(at(arc.to, "arc"), middle);
+    if (len(start) === 0 || len(end) === 0) {
+      throw new DiagramError(`The arc from ${arc.from} to ${arc.to} needs both ends away from its centre, ${arc.centre}.`);
+    }
+    return { ...arc, middle, start, end, radius: len(start) };
+  });
+  /** Anything round, so the name of a point on one can go straight outwards. */
+  const rounds = [...circles, ...arcs].map(({ middle, radius }) => ({ middle, radius }));
+
+  // A circle only stays round if both axes are scaled alike, so it insists.
+  const frame = axes ? graphFrame({ ...axes, equalScale: axes.equalScale || rounds.length > 0 }, placement) : null;
+  const graphParts = axes && frame ? buildGraph(spec, axes, frame, placement, prefix) : [];
+
+  const extents: Vec2[] = [
+    ...points.values(),
+    ...rounds.flatMap(({ middle, radius }): Vec2[] => [
+      [middle[0] - radius, middle[1] - radius],
+      [middle[0] + radius, middle[1] + radius],
+    ]),
+  ];
+  const xs = extents.map((p) => p[0]);
+  const ys = extents.map((p) => p[1]);
+  const figureSize = axes
+    ? Math.min(axes.xMax - axes.xMin, axes.yMax - axes.yMin)
+    : Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
+
   /** Labels are pushed away from here, so they sit outside the figure. */
+  const named = [...points.values()];
   const centre: Vec2 =
-    points.size > 0
-      ? [xs.reduce((sum, x) => sum + x, 0) / points.size, ys.reduce((sum, y) => sum + y, 0) / points.size]
+    named.length > 0
+      ? [named.reduce((sum, p) => sum + p[0], 0) / named.length, named.reduce((sum, p) => sum + p[1], 0) / named.length]
       : [0, 0];
+
+  // Ids must be unique, or a later part replaces an earlier one on the board: a
+  // polygon's side AB and a separate segment AB would otherwise share d1.AB.
+  const used = new Set(graphParts.map((part) => part.id));
+  const unique = (id: string) => {
+    let candidate = `${prefix}.${id}`;
+    for (let n = 2; used.has(candidate); n++) candidate = `${prefix}.${id}_${n}`;
+    used.add(candidate);
+    return candidate;
+  };
 
   // ---- pass one: build the figure in maths coordinates ----
   const drawn: DiagramPart[] = [];
   const stroke = (id: string, pts: Vec2[], options: { dashed?: boolean; attention?: boolean } = {}) =>
     drawn.push({
-      id: `${prefix}.${id}`,
+      id: unique(id),
       kind: "stroke",
       points: pts,
       closed: false,
@@ -368,10 +454,16 @@ export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, p
       attention: options.attention ?? false,
       faint: false,
     });
-  const label = (id: string, point: Vec2, text: string, attention = false) =>
-    drawn.push({ id: `${prefix}.${id}`, kind: "label", at: point, text, attention, anchor: "top-left" });
+  const label = (id: string, point: Vec2, text: string, anchor: LabelAnchor, attention = false) =>
+    drawn.push({ id: unique(id), kind: "label", at: point, text, attention, anchor });
 
-  // Shapes first, the way a figure is drawn.
+  // Circles and shapes first, the way a figure is drawn.
+  for (const circle of circles) {
+    stroke(`circle_${circle.centre}`, around(circle.middle, circle.radius, 0, Math.PI * 2, CIRCLE_STEPS), {
+      attention: circle.attention,
+    });
+  }
+
   for (const shape of spec.polygons) {
     if (shape.through.length < 3) throw new DiagramError("A polygon needs at least three points.");
     const corners = shape.through.map((name) => at(name, "polygon"));
@@ -384,6 +476,17 @@ export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, p
 
   for (const line of spec.segments) {
     stroke(`${line.from}${line.to}`, [at(line.from, "segment"), at(line.to, "segment")], { dashed: line.dashed });
+  }
+
+  for (const arc of arcs) {
+    // Anticlockwise from one end to the other, the way angles run in maths.
+    const from = Math.atan2(arc.start[1], arc.start[0]);
+    let sweep = Math.atan2(arc.end[1], arc.end[0]) - from;
+    while (sweep <= 0) sweep += Math.PI * 2;
+    const steps = Math.max(8, Math.ceil((sweep / (Math.PI * 2)) * CIRCLE_STEPS));
+    stroke(`arc_${arc.from}${arc.to}`, around(arc.middle, arc.radius, from, sweep, steps), {
+      attention: arc.attention,
+    });
   }
 
   // Then the angle marks.
@@ -412,22 +515,23 @@ export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, p
     let sweep = Math.atan2(armB[1], armB[0]) - start;
     while (sweep > Math.PI) sweep -= Math.PI * 2;
     while (sweep < -Math.PI) sweep += Math.PI * 2;
-    stroke(
-      `angle_${mark.at}`,
-      Array.from({ length: ANGLE_STEPS + 1 }, (_, i) => {
-        const angle = start + sweep * (i / ANGLE_STEPS);
-        return [corner[0] + Math.cos(angle) * radius, corner[1] + Math.sin(angle) * radius] as Vec2;
-      }),
-    );
+    stroke(`angle_${mark.at}`, around(corner, radius, start, sweep, ANGLE_STEPS));
 
     if (mark.text) {
       const middle = start + sweep / 2;
+      const direction: Vec2 = [Math.cos(middle), Math.sin(middle)];
       label(
         `label_${mark.at}`,
-        [corner[0] + Math.cos(middle) * radius * 2, corner[1] + Math.sin(middle) * radius * 2],
+        [corner[0] + direction[0] * radius * 1.6, corner[1] + direction[1] * radius * 1.6],
         mark.text,
+        anchorAway(direction),
       );
     }
+  }
+
+  // Dots, before any names are written beside them.
+  for (const mark of spec.markedPoints) {
+    if (mark.dot) stroke(`dot_${mark.at}`, around(at(mark.at, "point"), figureSize * DOT, 0, Math.PI * 2, 12));
   }
 
   // Labels last, so they can be placed clear of everything.
@@ -455,39 +559,38 @@ export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, p
     const toCentre = sub(centre, middle);
     if (outward[0] * toCentre[0] + outward[1] * toCentre[1] > 0) outward = [-outward[0], -outward[1]];
 
-    // Text sits to the right of its anchor and hangs below it, so a label on a
-    // vertical side needs more room sideways, and one below a horizontal side
-    // needs more room downwards, or it lands back on the line.
-    const vertical = Math.abs(along[1]) > Math.abs(along[0]);
-    const room = figureSize * LABEL_GAP * (vertical ? 1.8 : 1.3);
+    // The anchor keeps the text running away from the side, so a long label
+    // can't reach back across its own line.
+    const room = figureSize * LABEL_GAP * 1.2;
     const spot: Vec2 = [middle[0] + outward[0] * room, middle[1] + outward[1] * room];
-
-    label(`side_${side.from}${side.to}`, clearOfOthers(spot, outward), side.text, side.attention);
+    label(`side_${side.from}${side.to}`, clearOfOthers(spot, outward), side.text, anchorAway(outward), side.attention);
   }
+
+  /** Straight out from a circle the point sits on, or else away from the figure's middle. */
+  const outwardFrom = (point: Vec2): Vec2 => {
+    const round = rounds.find(({ middle, radius }) => Math.abs(len(sub(point, middle)) - radius) <= radius * 0.02);
+    if (round) return norm(sub(point, round.middle));
+    const away = sub(point, centre);
+    return len(away) > figureSize * 0.01 ? norm(away) : [0, 1];
+  };
 
   for (const mark of spec.markedPoints) {
     if (!mark.text) continue;
     const point = at(mark.at, "point");
-    // Nudge the name away from the middle of the figure.
-    const away = norm(sub(point, centre));
-    label(
-      `point_${mark.at}`,
-      [point[0] + away[0] * figureSize * LABEL_GAP, point[1] + away[1] * figureSize * LABEL_GAP],
-      mark.text,
-    );
+    const away = outwardFrom(point);
+    const gap = figureSize * LABEL_GAP * 0.6;
+    label(`point_${mark.at}`, [point[0] + away[0] * gap, point[1] + away[1] * gap], mark.text, anchorAway(away));
   }
 
   // ---- pass two: put it where it belongs, in world units ----
-  if (axes) {
+  if (frame) {
     // The axes set the frame, and any figure drawn alongside shares it.
-    const frame = graphFrame(axes, placement);
     const parts = [
-      ...buildGraph(spec, axes, frame, placement, prefix),
+      ...graphParts,
       ...drawn.map((part) =>
         part.kind === "stroke" ? { ...part, points: part.points.map(frame.world) } : { ...part, at: frame.world(part.at) },
       ),
     ];
-    if (parts.length === 0) throw new DiagramError("That diagram would draw nothing.");
     return { parts, box: boxOf(parts) };
   }
 

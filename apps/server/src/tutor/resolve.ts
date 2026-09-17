@@ -30,6 +30,9 @@ const SNAP_IOU = 0.3;
 /** An angle's vertex snaps to a corner within this many snapshot pixels. */
 const CORNER_SNAP_PX = 20;
 
+/** Room below a diagram for its caption, which the board writes 28 world units under it. */
+const CAPTION_ROOM = 28 + 26;
+
 export class OpError extends Error {}
 
 type PixelBox = [number, number, number, number];
@@ -303,20 +306,23 @@ export function createResolver(mapping: SnapshotMapping, nextAnnotationId: () =>
         const spec = parsed.data as DiagramSpec;
         const width = Math.max(120, Math.min(560, spec.width || 360));
         const height = width * 0.78;
-        const area = findClearArea(width, height, spec.near || null);
-        placedThisTurn.push(area);
+        const size = { x: 0, y: 0, width: toWorldLength(width), height: toWorldLength(height) };
 
         try {
-          const compiled = compileDiagram(
-            spec,
-            {
-              x: toWorldPoint([area[0], area[1]])[0],
-              y: toWorldPoint([area[0], area[1]])[1],
-              width: toWorldLength(width),
-              height: toWorldLength(height),
-            },
-            id,
-          );
+          // Compile once where it stands to learn how far its writing reaches: a
+          // long label can run well past the space the figure is fitted to. Clear
+          // space is then found for all of it, and the same drawing compiled there,
+          // so it only moves.
+          const reach = compileDiagram(spec, size, id).box;
+          const left = Math.min(0, reach[0]);
+          const top = Math.min(0, reach[1]);
+          const right = Math.max(size.width, reach[2]);
+          const bottom = Math.max(size.height, reach[3]) + (spec.caption ? CAPTION_ROOM : 0);
+
+          const area = findClearArea((right - left) * mapping.scale, (bottom - top) * mapping.scale, spec.near || null);
+          placedThisTurn.push(area);
+          const [x, y] = toWorldPoint([area[0], area[1]]);
+          const compiled = compileDiagram(spec, { ...size, x: x - left, y: y - top }, id);
           return { id, kind: "diagram", parts: compiled.parts, caption: spec.caption || null };
         } catch (err) {
           // Diagram problems are the tutor's to fix, so pass the reason back.
