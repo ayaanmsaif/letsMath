@@ -6,6 +6,7 @@ import {
   boardOpNames,
   countImageTokens,
   type BoardOpName,
+  type ResolvedOp,
   type TurnEvent,
   type TurnRequest,
 } from "@letsmath/shared";
@@ -23,6 +24,12 @@ import { boardTools, TOOL_GUIDANCE } from "./tools";
 const MAX_TOKENS = 4096;
 /** Rough allowance for the system prompt, tools, and message framing when estimating cost. */
 const PROMPT_ALLOWANCE_TOKENS = 3500;
+/**
+ * A refused drawing is sent straight back once, so the tutor fixes it in the
+ * same turn (PLAN.md §4). One retry covers a slip; a second failure is more
+ * likely a misunderstanding, and is left for the student's next message.
+ */
+const MAX_RETRIES = 1;
 
 const SYSTEM_PROMPT = `${TUTOR_SYSTEM_PROMPT}\n\n${TOOL_GUIDANCE}`;
 
@@ -48,7 +55,12 @@ async function recordToolError(sessionId: string, tool: string, input: unknown, 
   }
 }
 
-let client: Anthropic | null = null;
+let client: Pick<Anthropic, "messages"> | null = null;
+
+/** Tests hand in a stand-in for Claude, so the turn loop runs without a network or a bill. */
+export function useClaudeForTests(standIn: Pick<Anthropic, "messages">) {
+  client = standIn;
+}
 
 export async function runTurn(request: TurnRequest, emit: Emit, signal: AbortSignal): Promise<void> {
   const session = getSession(request.sessionId);
@@ -102,37 +114,54 @@ function userContent(session: TutorSession, request: TurnRequest): Anthropic.Con
   return content;
 }
 
-async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: Emit, signal: AbortSignal) {
-  const model = config.tutorModel;
-  const newTokens =
-    (request.snapshot ? countImageTokens(request.snapshot.width, request.snapshot.height) : 0) +
-    Math.ceil((request.text.length + (request.snapshot?.digest.length ?? 0)) / 3);
-  const estimatedInput = session.lastInputTokens + newTokens + PROMPT_ALLOWANCE_TOKENS;
+/**
+ * The results of a round in which a drawing was refused, sent straight back.
+ * Each refused one says what to do about it. The student never saw the
+ * failure, so there's nothing to apologise for.
+ */
+function retryContent(results: Anthropic.ToolResultBlockParam[]): Anthropic.ToolResultBlockParam[] {
+  return results.map((result) =>
+    result.is_error
+      ? {
+          ...result,
+          content: `Refused, so nothing was drawn: ${result.content} Call the tool again now with that fixed. The student hasn't seen the failure, so don't mention it; just draw.`,
+        }
+      : result,
+  );
+}
 
+interface Round {
+  message: Anthropic.Message;
+  toolResults: Anthropic.ToolResultBlockParam[];
+  costUsd: number;
+  firstWordMs: number | undefined;
+}
+
+/**
+ * One request to Claude: reserve its worst case, stream the reply, apply each
+ * drawing the moment its call finishes, then settle what it really cost.
+ * Returns null when the round ended early, having already told the student why.
+ */
+async function requestReply(
+  session: TutorSession,
+  messages: Anthropic.MessageParam[],
+  resolve: ReturnType<typeof createResolver>,
+  estimatedInput: number,
+  emit: Emit,
+  signal: AbortSignal,
+  textPrefix: string,
+): Promise<Round | null> {
+  const model = config.tutorModel;
   let slot: Awaited<ReturnType<typeof reserve>>;
   try {
     slot = await reserve(worstCaseUsd(model, estimatedInput, MAX_TOKENS));
   } catch (err) {
-    if (err instanceof BudgetExceededError) return emit({ type: "error", code: "budget", message: err.message });
-    throw err;
+    if (!(err instanceof BudgetExceededError)) throw err;
+    await emit({ type: "error", code: "budget", message: err.message });
+    return null;
   }
-
-  if (request.snapshot) {
-    session.mapping = {
-      origin: request.snapshot.origin,
-      scale: request.snapshot.scale,
-      items: request.snapshot.items,
-      width: request.snapshot.width,
-      height: request.snapshot.height,
-    };
-  }
-  const resolve = createResolver(session.mapping ?? { origin: [0, 0], scale: 1, items: [] }, () => {
-    session.annotationCount += 1;
-    return `a${session.annotationCount}`;
-  });
 
   client ??= createClaude();
-  const messages: Anthropic.MessageParam[] = [...session.messages, { role: "user", content: userContent(session, request) }];
   const stream = client.messages.stream(
     {
       model,
@@ -151,7 +180,10 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
   const started = Date.now();
   let firstWordMs: number | undefined;
   stream.on("text", (text) => {
-    firstWordMs ??= Date.now() - started;
+    if (firstWordMs === undefined) {
+      firstWordMs = Date.now() - started;
+      text = textPrefix + text;
+    }
     void emit({ type: "text", text });
   });
 
@@ -163,16 +195,22 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
     for (const [index, block] of blocks.entries()) {
       if (block.type !== "tool_use" || applied.has(index)) continue;
       applied.add(index);
+
+      let op: ResolvedOp;
       try {
         if (!boardOpNames.includes(block.name as BoardOpName)) throw new OpError(`Unknown tool ${block.name}`);
-        const op = resolve(block.name as BoardOpName, block.input);
-        await emit({ type: "op", op });
-        toolResults.push({ type: "tool_result", tool_use_id: block.id, content: `Drawn as ${op.id}.` });
+        op = resolve(block.name as BoardOpName, block.input);
       } catch (err) {
         const message = err instanceof OpError ? err.message : "Couldn't draw that.";
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: message, is_error: true });
         void recordToolError(session.id, block.name, block.input, err);
+        continue;
       }
+      // Recorded before the op is sent, never after: once finalMessage resolves,
+      // every call must already have its result, or the next request pairs a
+      // tool_use with nothing and the API refuses the session from then on.
+      toolResults.push({ type: "tool_result", tool_use_id: block.id, content: `Drawn as ${op.id}.` });
+      await emit({ type: "op", op });
     }
   };
   stream.on("streamEvent", (event) => {
@@ -182,42 +220,8 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
   try {
     const message = await stream.finalMessage();
     await applyFinishedTools();
-
-    // Only a completed turn joins the history, so a failed one can simply be retried.
-    session.messages = [...messages, { role: "assistant", content: message.content }];
-    session.pendingToolResults = toolResults;
-    session.lastInputTokens =
-      message.usage.input_tokens +
-      (message.usage.cache_read_input_tokens ?? 0) +
-      (message.usage.cache_creation_input_tokens ?? 0);
-
     const entry = await slot.settle("tutor", message.model, message.usage);
-    const status = await budgetStatus();
-    // Every paid turn is logged, so spend is always attributable to a session.
-    console.log(
-      `[turn] session=${session.id.slice(0, 8)} trigger=${request.trigger} model=${message.model} ` +
-        `firstWord=${firstWordMs ?? "-"}ms done=${Date.now() - started}ms ` +
-        `cost=$${(entry?.costUsd ?? 0).toFixed(4)} total=$${status.spentUsd.toFixed(4)} of $${status.budgetUsd.toFixed(2)}`,
-    );
-    await emit({
-      type: "usage",
-      usage: {
-        model: message.model,
-        inputTokens: message.usage.input_tokens,
-        outputTokens: message.usage.output_tokens,
-        cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
-        costUsd: entry?.costUsd ?? 0,
-        spentUsd: status.spentUsd,
-        budgetUsd: status.budgetUsd,
-        firstWordMs,
-        totalMs: Date.now() - started,
-      },
-    });
-    if (message.stop_reason === "refusal") {
-      await emit({ type: "error", code: "refusal", message: "The tutor couldn't help with that. Try rephrasing." });
-    }
-    await emit({ type: "done", stopReason: message.stop_reason, mock: false });
+    return { message, toolResults, costUsd: entry?.costUsd ?? 0, firstWordMs };
   } catch (err) {
     // Record whatever was billed before the stream ended; an API error before generation bills nothing.
     const partial: Usage | undefined = stream.currentMessage?.usage;
@@ -225,10 +229,99 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
     else if (err instanceof Anthropic.APIUserAbortError) await slot.settle("tutor", model, { input_tokens: estimatedInput, output_tokens: 0 });
     else slot.release();
 
-    if (err instanceof Anthropic.APIUserAbortError) return;
+    if (err instanceof Anthropic.APIUserAbortError) return null;
     if (err instanceof Anthropic.APIError) {
-      return emit({ type: "error", code: "api", message: `Claude API error ${err.status ?? ""}: ${err.message}` });
+      await emit({ type: "error", code: "api", message: `Claude API error ${err.status ?? ""}: ${err.message}` });
+      return null;
     }
     throw err;
   }
+}
+
+async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: Emit, signal: AbortSignal) {
+  const newTokens =
+    (request.snapshot ? countImageTokens(request.snapshot.width, request.snapshot.height) : 0) +
+    Math.ceil((request.text.length + (request.snapshot?.digest.length ?? 0)) / 3);
+
+  if (request.snapshot) {
+    session.mapping = {
+      origin: request.snapshot.origin,
+      scale: request.snapshot.scale,
+      items: request.snapshot.items,
+      width: request.snapshot.width,
+      height: request.snapshot.height,
+    };
+  }
+  const resolve = createResolver(session.mapping ?? { origin: [0, 0], scale: 1, items: [] }, () => {
+    session.annotationCount += 1;
+    return `a${session.annotationCount}`;
+  });
+
+  const started = Date.now();
+  const rounds: Round[] = [];
+  let messages: Anthropic.MessageParam[] = [...session.messages, { role: "user", content: userContent(session, request) }];
+  let estimatedInput = session.lastInputTokens + newTokens + PROMPT_ALLOWANCE_TOKENS;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const round = await requestReply(session, messages, resolve, estimatedInput, emit, signal, attempt > 0 ? "\n\n" : "");
+    if (!round) break;
+    rounds.push(round);
+
+    // Only a completed round joins the history, so one that fails part-way leaves
+    // it whole: the last assistant message and the results still owed for it.
+    const { message, toolResults } = round;
+    session.messages = [...messages, { role: "assistant", content: message.content }];
+    session.pendingToolResults = toolResults;
+    session.lastInputTokens =
+      message.usage.input_tokens +
+      (message.usage.cache_read_input_tokens ?? 0) +
+      (message.usage.cache_creation_input_tokens ?? 0);
+
+    const refused = toolResults.some((result) => result.is_error);
+    if (!refused || message.stop_reason === "refusal" || signal.aborted) break;
+    if (attempt === MAX_RETRIES) {
+      // Still refused after a retry: say so, rather than leave "here it is" over an empty board.
+      await emit({ type: "text", text: "\n\n_(That drawing didn't work. Ask me to try it another way.)_" });
+      break;
+    }
+
+    console.log(`[turn] session=${session.id.slice(0, 8)} a drawing was refused; sending it straight back`);
+    messages = [...session.messages, { role: "user", content: retryContent(toolResults) }];
+    estimatedInput = session.lastInputTokens + message.usage.output_tokens + PROMPT_ALLOWANCE_TOKENS;
+  }
+
+  const last = rounds.at(-1);
+  if (!last) return;
+
+  // One usage line for the whole turn, however many rounds it took.
+  const total = (pick: (usage: Anthropic.Usage) => number | null | undefined) =>
+    rounds.reduce((sum, round) => sum + (pick(round.message.usage) ?? 0), 0);
+  const costUsd = rounds.reduce((sum, round) => sum + round.costUsd, 0);
+  const firstWordMs = rounds[0].firstWordMs;
+  const status = await budgetStatus();
+  // Every paid turn is logged, so spend is always attributable to a session.
+  console.log(
+    `[turn] session=${session.id.slice(0, 8)} trigger=${request.trigger} model=${last.message.model} ` +
+      `rounds=${rounds.length} firstWord=${firstWordMs ?? "-"}ms done=${Date.now() - started}ms ` +
+      `cost=$${costUsd.toFixed(4)} total=$${status.spentUsd.toFixed(4)} of $${status.budgetUsd.toFixed(2)}`,
+  );
+  await emit({
+    type: "usage",
+    usage: {
+      model: last.message.model,
+      inputTokens: total((usage) => usage.input_tokens),
+      outputTokens: total((usage) => usage.output_tokens),
+      cacheReadTokens: total((usage) => usage.cache_read_input_tokens),
+      cacheWriteTokens: total((usage) => usage.cache_creation_input_tokens),
+      costUsd,
+      spentUsd: status.spentUsd,
+      budgetUsd: status.budgetUsd,
+      firstWordMs,
+      totalMs: Date.now() - started,
+    },
+  });
+  if (rounds.some((round) => round.message.stop_reason === "refusal")) {
+    await emit({ type: "error", code: "refusal", message: "The tutor couldn't help with that. Try rephrasing." });
+  }
+  await emit({ type: "done", stopReason: last.message.stop_reason, mock: false });
 }

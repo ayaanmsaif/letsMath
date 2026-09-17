@@ -4,7 +4,7 @@ import { updatePatch } from "../model/history";
 import { sortedShapes, useBoard } from "../model/store";
 import type { Box, Shape, Vec } from "../model/types";
 import { openEquationEditor } from "./equation";
-import { HANDLE_HIT_PX, HANDLES, handlePosition, selectionBounds, topShapeAt, type Handle } from "./selection";
+import { HANDLE_HIT_PX, HANDLES, handlePosition, selectionBounds, topShapeAt, withGroups, type Handle } from "./selection";
 import { beginTextEdit } from "./text";
 import type { Tool } from "./types";
 
@@ -56,17 +56,31 @@ export function createSelectTool(): Tool {
 
       const hit = topShapeAt(p.world);
       if (hit) {
-        if (p.detail >= 2 && (hit.type === "text" || hit.type === "equation")) {
-          // Editing replaces the selection outline with the editor.
-          board.setSelection([]);
-          return hit.type === "text" ? beginTextEdit(hit) : openEquationEditor(hit);
+        if (p.detail >= 2) {
+          // A second click reaches inside a tutor's drawing, to the one piece
+          // under the pointer; on the student's own writing it opens the editor.
+          if (hit.author === "tutor") {
+            board.setSelection([hit.id]);
+            gesture = { kind: "move", start: p.world, originals: [hit], moved: false };
+            return;
+          }
+          if (hit.type === "text" || hit.type === "equation") {
+            // Editing replaces the selection outline with the editor.
+            board.setSelection([]);
+            return hit.type === "text" ? beginTextEdit(hit) : openEquationEditor(hit);
+          }
         }
 
+        // A tutor drawing moves as one thing, however many shapes it is made of.
+        const group = withGroups([hit.id], board.shapes);
         let selection = board.selection;
         if (p.shift) {
-          selection = selection.includes(hit.id) ? selection.filter((id) => id !== hit.id) : [...selection, hit.id];
+          const whole = group.every((id) => selection.includes(id));
+          selection = whole
+            ? selection.filter((id) => !group.includes(id))
+            : [...new Set([...selection, ...group])];
         } else if (!selection.includes(hit.id)) {
-          selection = [hit.id];
+          selection = group;
         }
         board.setSelection(selection);
         gesture = {
@@ -113,7 +127,7 @@ export function createSelectTool(): Tool {
         const inside = sortedShapes(board.shapes)
           .filter((s) => boxesIntersect(shapeBounds(s), marquee))
           .map((s) => s.id);
-        board.setSelection([...new Set([...gesture.base, ...inside])]);
+        board.setSelection([...new Set([...gesture.base, ...withGroups(inside, board.shapes)])]);
       }
     },
 

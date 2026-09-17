@@ -60,7 +60,25 @@ export function Board({ children }: { children?: ReactNode }) {
       e.clientY - viewport.top,
     ];
 
-    const toBoardPointer = (e: PointerEvent): BoardPointer => {
+    /**
+     * How many times this spot has just been clicked.
+     *
+     * A pointer event's own `detail` is always 0, unlike a mouse event's, and the
+     * mouse events that would carry a click count never arrive, because
+     * pointerdown's default action is prevented. So repeats are counted here:
+     * same place, quick succession.
+     */
+    let lastClick = { at: 0, x: 0, y: 0, count: 0 };
+    const countClick = (e: PointerEvent) => {
+      const repeat =
+        e.timeStamp - lastClick.at < 400 &&
+        Math.abs(e.clientX - lastClick.x) <= 6 &&
+        Math.abs(e.clientY - lastClick.y) <= 6;
+      lastClick = { at: e.timeStamp, x: e.clientX, y: e.clientY, count: repeat ? lastClick.count + 1 : 1 };
+      return lastClick.count;
+    };
+
+    const toBoardPointer = (e: PointerEvent, detail = 0): BoardPointer => {
       const camera = useBoard.getState().camera;
       const sample = (ev: PointerEvent): InkPoint => {
         const [x, y] = screenToWorld(camera, screenOf(ev));
@@ -78,7 +96,7 @@ export function Board({ children }: { children?: ReactNode }) {
         shift: e.shiftKey,
         alt: e.altKey,
         mod: isMac ? e.metaKey : e.ctrlKey,
-        detail: e.detail,
+        detail,
       };
     };
 
@@ -132,7 +150,7 @@ export function Board({ children }: { children?: ReactNode }) {
       const toolId = useBoard.getState().tool;
       if (toolId !== "text") commitTextDraft();
       gesture = { kind: "tool", pointerId: e.pointerId };
-      getTool(toolId).onDown(toBoardPointer(e));
+      getTool(toolId).onDown(toBoardPointer(e, countClick(e)));
     };
 
     const onMove = (e: PointerEvent) => {

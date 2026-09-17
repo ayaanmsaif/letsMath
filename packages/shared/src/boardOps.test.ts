@@ -110,7 +110,6 @@ describe("board op schemas", () => {
       ],
       near: "g1",
       width: 400,
-      caption: "Unit circle with the point at 30°",
     };
     const parsed = boardOpSchemas.draw_diagram.safeParse(sent);
     expect(parsed.error?.issues ?? []).toEqual([]);

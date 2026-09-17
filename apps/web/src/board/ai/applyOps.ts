@@ -266,13 +266,6 @@ async function shapesFor(op: ResolvedOp): Promise<Shape[]> {
           shapes.push({ ...text, id: part.id });
         }
       }
-      if (op.caption && shapes.length > 0) {
-        // Below everything drawn, not just the first part, so it can't land on a label.
-        const box = unionBoxes(shapes.map(shapeBounds))!;
-        shapes.push(
-          await labelShape(op, shapes.length, COLORS.tutor, [box.minX, box.maxY + 28], op.caption, false, "s"),
-        );
-      }
       return shapes;
     }
     case "erase":
