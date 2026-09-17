@@ -5,8 +5,10 @@
 import {
   boardOpSchemas,
   compileDiagram,
+  diagramShape,
   DiagramError,
   MAX_ERASE_IDS,
+  tidyDiagramInput,
   type BoardItem,
   type BoardOpName,
   type DiagramSpec,
@@ -29,9 +31,6 @@ export interface SnapshotMapping {
 const SNAP_IOU = 0.3;
 /** An angle's vertex snaps to a corner within this many snapshot pixels. */
 const CORNER_SNAP_PX = 20;
-
-/** Room below a diagram for its caption, which the board writes 28 world units under it. */
-const CAPTION_ROOM = 28 + 26;
 
 export class OpError extends Error {}
 
@@ -215,7 +214,10 @@ export function createResolver(mapping: SnapshotMapping, nextAnnotationId: () =>
   }
 
   return function resolve(name: BoardOpName, rawInput: unknown): ResolvedOp {
-    const parsed = boardOpSchemas[name].safeParse(rawInput);
+    // A diagram is tidied first: its tool can't be strict, so obvious slips
+    // (no width, a sentence in near, leaked markup) shouldn't cost a drawing.
+    const input = name === "draw_diagram" ? tidyDiagramInput(rawInput) : rawInput;
+    const parsed = boardOpSchemas[name].safeParse(input);
     if (!parsed.success) throw new OpError(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
     const id = nextAnnotationId();
 
@@ -304,9 +306,15 @@ export function createResolver(mapping: SnapshotMapping, nextAnnotationId: () =>
       }
       case "draw_diagram": {
         const spec = parsed.data as DiagramSpec;
-        const width = Math.max(120, Math.min(560, spec.width || 360));
-        const height = width * 0.78;
-        const size = { x: 0, y: 0, width: toWorldLength(width), height: toWorldLength(height) };
+        // Sizes here are in board units, like the text, not snapshot pixels:
+        // what matters is how big the drawing looks beside its own labels. Below
+        // these floors a diagram comes out smaller than its tick numbers,
+        // whatever width was asked for, and a graph needs the most room because
+        // its margins take a fixed amount before the plot gets any.
+        const asked = toWorldLength(Math.min(700, Math.max(80, spec.width || 400)));
+        const smallest = spec.axes.length > 0 ? 420 : 320;
+        const shape = diagramShape(spec, Math.min(900, Math.max(smallest, asked)));
+        const size = { x: 0, y: 0, width: shape.width, height: shape.height };
 
         try {
           // Compile once where it stands to learn how far its writing reaches: a
@@ -317,13 +325,17 @@ export function createResolver(mapping: SnapshotMapping, nextAnnotationId: () =>
           const left = Math.min(0, reach[0]);
           const top = Math.min(0, reach[1]);
           const right = Math.max(size.width, reach[2]);
-          const bottom = Math.max(size.height, reach[3]) + (spec.caption ? CAPTION_ROOM : 0);
+          const bottom = Math.max(size.height, reach[3]);
 
-          const area = findClearArea((right - left) * mapping.scale, (bottom - top) * mapping.scale, spec.near || null);
+          const area = findClearArea(
+            (right - left) * mapping.scale,
+            (bottom - top) * mapping.scale,
+            spec.near || null,
+          );
           placedThisTurn.push(area);
           const [x, y] = toWorldPoint([area[0], area[1]]);
           const compiled = compileDiagram(spec, { ...size, x: x - left, y: y - top }, id);
-          return { id, kind: "diagram", parts: compiled.parts, caption: spec.caption || null };
+          return { id, kind: "diagram", parts: compiled.parts };
         } catch (err) {
           // Diagram problems are the tutor's to fix, so pass the reason back.
           throw err instanceof DiagramError ? new OpError(err.message) : err;

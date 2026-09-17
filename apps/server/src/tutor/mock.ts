@@ -46,7 +46,6 @@ const blankSpec = {
   arcs: [],
   near: "",
   width: 360,
-  caption: "",
 };
 
 /** A labelled 3-4-5 triangle, for exercising the diagram compiler without calling Claude. */
@@ -93,7 +92,6 @@ const mockGraph = {
     { expr: "cos(x)", from: 0, to: 0, label: "y = \\cos x", attention: true },
   ],
   width: 420,
-  caption: "sin and cos from -2pi to 2pi",
 };
 
 /** The unit circle with 30° marked, its point built rather than calculated, for exercising circles for free. */

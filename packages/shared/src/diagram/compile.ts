@@ -116,6 +116,25 @@ function leftPad(axes: DiagramAxes): number {
   return Math.max(GRAPH_PAD.left, widest + TICK + 10);
 }
 
+/**
+ * The space a diagram should be given, for the width the tutor asked for.
+ *
+ * A figure is happy in a box wider than it is tall. A graph is not: its scales
+ * are often locked together, so the plot can only be as big as the shorter side
+ * allows, and a square-ranged graph squeezed into a wide, short box wastes most
+ * of its width and comes out smaller than its own tick numbers.
+ */
+export function diagramShape(spec: DiagramSpec, width: number): { width: number; height: number } {
+  const axes = spec.axes[0];
+  if (!axes) return { width, height: width * 0.78 };
+
+  const plotWidth = Math.max(40, width - leftPad(axes) - GRAPH_PAD.right);
+  const xSpan = axes.xMax - axes.xMin;
+  const ySpan = axes.yMax - axes.yMin;
+  const shape = xSpan > 0 && ySpan > 0 ? clamp(ySpan / xSpan, 0.6, 1.25) : 0.78;
+  return { width, height: GRAPH_PAD.top + GRAPH_PAD.bottom + plotWidth * shape };
+}
+
 function graphFrame(axes: DiagramAxes, placement: DiagramPlacement): Frame {
   const xSpan = axes.xMax - axes.xMin;
   const ySpan = axes.yMax - axes.yMin;
@@ -224,6 +243,20 @@ function buildGraph(spec: DiagramSpec, axes: DiagramAxes, frame: Frame, placemen
   const numbersBelow = Math.max(frame.world([0, originY])[1] + TICK, frame.world([0, axes.yMin])[1]) + 4;
   const numbersAt = Math.min(frame.world([originX, 0])[0] - TICK, frame.world([axes.xMin, 0])[0]) - 6;
 
+  // Label only as many ticks as there is room for. A -12 to 12 axis stepping in
+  // twos prints thirteen numbers across a plot a few hundred pixels wide, all on
+  // top of one another. The marks stay; only the numbers thin out, counted from
+  // the origin so the labelled ones stay symmetrical about it.
+  const gapBetween = (values: number[], along: (value: number) => number) =>
+    values.length > 1 ? Math.abs(along(values[1]) - along(values[0])) : Infinity;
+  const widestX = xTicks.reduce((most, v) => Math.max(most, estimateWidth(formatTick(v, axes.piTicks))), CHAR_W);
+  const everyX = Math.max(1, Math.ceil((widestX + 10) / gapBetween(xTicks, (v) => frame.world([v, originY])[0])));
+  const everyY = Math.max(1, Math.ceil((LINE_H + 4) / gapBetween(yTicks, (v) => frame.world([originX, v])[1])));
+  const nearestZero = (values: number[], origin: number) =>
+    values.reduce((best, value, i) => (Math.abs(value - origin) < Math.abs(values[best] - origin) ? i : best), 0);
+  const fromX = nearestZero(xTicks, originX);
+  const fromY = nearestZero(yTicks, originY);
+
   // The lowest y number and the first x number meet in the bottom-left corner;
   // when both would be written, the y one stays.
   const cornerTaken = yTicks.some((v) => Math.abs(v - axes.yMin) < 1e-9 && Math.abs(v - originY) >= 1e-9);
@@ -237,6 +270,7 @@ function buildGraph(spec: DiagramSpec, axes: DiagramAxes, frame: Frame, placemen
       [x, y + TICK],
     ]);
     if (cornerTaken && Math.abs(value - axes.xMin) < 1e-9) continue;
+    if ((i - fromX) % everyX !== 0) continue;
     // Centred on the tick by the renderer: a pi fraction is many characters but
     // few glyphs, so shifting it by character count throws it onto its neighbour.
     label(`xnum${i + 1}`, [x, numbersBelow], formatTick(value, axes.piTicks), false, "top-centre");
@@ -249,6 +283,7 @@ function buildGraph(spec: DiagramSpec, axes: DiagramAxes, frame: Frame, placemen
       [x - TICK, y],
       [x + TICK, y],
     ]);
+    if ((i - fromY) % everyY !== 0) continue;
     label(`ynum${i + 1}`, [numbersAt, y], formatTick(value, false), false, "middle-right");
   }
 
@@ -571,7 +606,10 @@ export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, p
     const round = rounds.find(({ middle, radius }) => Math.abs(len(sub(point, middle)) - radius) <= radius * 0.02);
     if (round) return norm(sub(point, round.middle));
     const away = sub(point, centre);
-    return len(away) > figureSize * 0.01 ? norm(away) : [0, 1];
+    // A point at the very middle — the origin of a graph, say — has no outward
+    // direction of its own. Its name goes below and left, the way it's written
+    // on graph paper, where the axes leave room for it.
+    return len(away) > figureSize * 0.01 ? norm(away) : [-0.7, -0.7];
   };
 
   for (const mark of spec.markedPoints) {

@@ -154,8 +154,11 @@ export const diagramSpecSchema = z
     labels: z.array(sideLabel).describe("Labels for sides, placed outside the shape."),
     markedPoints: z.array(markedPoint).describe("Points to show with a dot, a name, or both."),
     near: z.string().max(40).describe("Id to sit beside, e.g. g4. Empty string to put it anywhere clear."),
-    width: z.number().describe("Roughly how wide the diagram should be, in snapshot pixels. 300-450 suits most."),
-    caption: z.string().max(120).describe("Short caption under the diagram, or an empty string."),
+    width: z
+      .number()
+      .describe(
+        "Roughly how wide the diagram should be, in snapshot pixels. Draw big: 420-520 suits most, and a graph needs at least 420 for its numbers to be readable.",
+      ),
   })
   .strict();
 

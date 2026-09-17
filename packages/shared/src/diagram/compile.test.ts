@@ -16,7 +16,6 @@ const empty = {
   arcs: [],
   near: "",
   width: 360,
-  caption: "",
 };
 
 /** The classic 3-4-5 triangle: right angle at B, θ at A, sides labelled. */
@@ -316,6 +315,34 @@ describe("compileDiagram: graphs", () => {
     const first = label(parts, "d1.plot1_label");
     const second = label(parts, "d1.plot2_label");
     expect(Math.abs(first.at[1] - second.at[1]) >= 22 || Math.abs(first.at[0] - second.at[0]) > 80).toBe(true);
+  });
+
+  // Seen in a real graph: a circle of radius 10 on -12 to 12 axes stepping in
+  // twos printed thirteen numbers along each axis, straight over each other.
+  it("labels only as many ticks as there is room for", () => {
+    const crowded: DiagramSpec = {
+      ...empty,
+      axes: [{ ...axes, xMin: -12, xMax: 12, yMin: -12, yMax: 12, xStep: 2, yStep: 2, piTicks: false, grid: true }],
+      points: [{ name: "O", x: 0, y: 0 }],
+      circles: [{ centre: "O", through: "", radius: 10, attention: false }],
+    };
+    const { parts } = compile(crowded);
+    const numbers = (prefix: string) =>
+      parts.filter((p): p is Extract<DiagramPart, { kind: "label" }> => p.kind === "label" && p.id.startsWith(prefix));
+
+    const across = numbers("d1.xnum")
+      .map((n) => n.at[0])
+      .sort((a, b) => a - b);
+    expect(across.length).toBeGreaterThan(2);
+    for (let i = 1; i < across.length; i++) expect(across[i] - across[i - 1]).toBeGreaterThanOrEqual(26);
+
+    const down = numbers("d1.ynum")
+      .map((n) => n.at[1])
+      .sort((a, b) => a - b);
+    for (let i = 1; i < down.length; i++) expect(down[i] - down[i - 1]).toBeGreaterThanOrEqual(22);
+
+    // The tick marks themselves all stay; only the numbers thin out.
+    expect(parts.filter((p) => p.id.startsWith("d1.xtick")).length).toBeGreaterThan(across.length);
   });
 
   it("draws the grid faintly, so it guides the eye instead of caging the curve", () => {

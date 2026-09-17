@@ -138,7 +138,7 @@ export type ResolvedOp =
       size: "s" | "m" | "l";
       color: TutorColor;
     }
-  | { id: string; kind: "diagram"; parts: DiagramPart[]; caption: string | null }
+  | { id: string; kind: "diagram"; parts: DiagramPart[] }
   | { id: string; kind: "erase"; ids: string[] | "all" };
 
 /** Lengths the API can't enforce for us, checked on the server instead. */

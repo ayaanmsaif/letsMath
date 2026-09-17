@@ -129,7 +129,6 @@ describe("resolve", () => {
       arcs: [],
       near: "g1",
       width: 200,
-      caption: "",
     };
 
     /** Parts come back in world units; this puts them back into snapshot pixels. */
@@ -182,6 +181,40 @@ describe("resolve", () => {
         const overlaps = textBox[0] < c && textBox[2] > a && textBox[1] < d && textBox[3] > b;
         expect(overlaps, `label text overlaps ${JSON.stringify(item.box)}`).toBe(false);
       }
+    });
+
+    // Seen in a real turn: a circle of radius 10 drew smaller than its own tick
+    // numbers, because the tutor asked for a narrow box and a graph's margins
+    // take a fixed amount out of whatever it is given.
+    it("draws a graph large enough to work with, whatever width was asked for", () => {
+      const graph = {
+        ...spec,
+        polygons: [],
+        angles: [],
+        points: [{ name: "O", x: 0, y: 0 }],
+        circles: [{ centre: "O", through: "", radius: 10, attention: false }],
+        axes: [
+          {
+            xMin: -12,
+            xMax: 12,
+            yMin: -12,
+            yMax: 12,
+            xLabel: "x",
+            yLabel: "y",
+            xStep: 2,
+            yStep: 2,
+            piTicks: false,
+            grid: true,
+            equalScale: true,
+          },
+        ],
+        width: 200,
+      };
+      const op = resolver()("draw_diagram", graph) as { parts: { id: string; points?: number[][] }[] };
+      const circle = op.parts.find((part) => part.id === "a1.circle_O")!;
+      const across = circle.points!.map((p) => p[0]);
+      // In board units, the same units the labels are drawn in.
+      expect(Math.max(...across) - Math.min(...across)).toBeGreaterThan(280);
     });
 
     it("passes a diagram mistake back as something the tutor can fix", () => {
