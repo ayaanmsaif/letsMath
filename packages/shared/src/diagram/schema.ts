@@ -65,8 +65,47 @@ const markedPoint = z
   })
   .strict();
 
+const axes = z
+  .object({
+    xMin: z.number(),
+    xMax: z.number(),
+    yMin: z.number(),
+    yMax: z.number(),
+    xLabel: z.string().max(20).describe("Name for the x-axis, such as x. Empty string for none."),
+    yLabel: z.string().max(20).describe("Name for the y-axis, such as y. Empty string for none."),
+    xStep: z.number().describe("Gap between ticks along x. Use 0 to have them spaced sensibly."),
+    yStep: z.number().describe("Gap between ticks along y. Use 0 to have them spaced sensibly."),
+    piTicks: z.boolean().describe("true to tick x in multiples of pi, which suits trig graphs."),
+    grid: z.boolean().describe("true for faint grid lines behind the curve."),
+    equalScale: z
+      .boolean()
+      .describe(
+        "true when x and y must be scaled alike, so a circle stays round. false lets the graph fill its space, which suits y = sin x.",
+      ),
+  })
+  .strict();
+
+const plot = z
+  .object({
+    expr: z
+      .string()
+      .max(80)
+      .describe("A function of x written plainly, such as sin(x), 2x+1, x^2-3 or sqrt(x). Not LaTeX."),
+    from: z.number().describe("Start of the domain. Set from and to both to 0 to use the whole x-axis."),
+    to: z.number().describe("End of the domain."),
+    label: z.string().max(40).describe("Name to write beside the curve, such as y = \\sin x. Empty string for none."),
+    attention: z.boolean().describe("true to draw this curve in the attention colour."),
+  })
+  .strict();
+
 export const diagramSpecSchema = z
   .object({
+    axes: z
+      .array(axes)
+      .describe("Give one of these to draw a graph with axes. Leave the list empty for a plain figure."),
+    plots: z
+      .array(plot)
+      .describe("Curves to draw on those axes. The board works each one out from the function itself."),
     points: z.array(namedPoint).describe("Every named point, in maths coordinates (y upwards)."),
     polygons: z.array(polygon).describe("Closed shapes joining named points."),
     segments: z.array(segment).describe("Individual lines, for anything not part of a polygon."),
@@ -81,3 +120,4 @@ export const diagramSpecSchema = z
 
 export type DiagramSpec = z.infer<typeof diagramSpecSchema>;
 export type DiagramPoint = z.infer<typeof namedPoint>;
+export type DiagramAxes = z.infer<typeof axes>;

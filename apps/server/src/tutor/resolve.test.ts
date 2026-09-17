@@ -122,6 +122,8 @@ describe("resolve", () => {
       angles: [{ at: "B", from: "A", to: "C", text: "", rightAngle: true }],
       labels: [],
       markedPoints: [],
+      axes: [],
+      plots: [],
       near: "g1",
       width: 200,
       caption: "",

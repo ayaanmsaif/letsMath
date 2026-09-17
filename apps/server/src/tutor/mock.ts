@@ -32,8 +32,23 @@ function scriptFor(request: TurnRequest): string {
   }
 }
 
+const blankSpec = {
+  points: [],
+  polygons: [],
+  segments: [],
+  angles: [],
+  labels: [],
+  markedPoints: [],
+  axes: [],
+  plots: [],
+  near: "",
+  width: 360,
+  caption: "",
+};
+
 /** A labelled 3-4-5 triangle, for exercising the diagram compiler without calling Claude. */
 const mockTriangle = {
+  ...blankSpec,
   points: [
     { name: "A", x: 0, y: 0 },
     { name: "B", x: 4, y: 0 },
@@ -50,10 +65,32 @@ const mockTriangle = {
     { from: "B", to: "C", text: "3", attention: false },
     { from: "C", to: "A", text: "5", attention: true },
   ],
-  markedPoints: [],
-  near: "",
-  width: 360,
-  caption: "",
+};
+
+/** Sine and cosine on pi-ticked axes, for exercising graphs without calling Claude. */
+const mockGraph = {
+  ...blankSpec,
+  axes: [
+    {
+      xMin: -Math.PI * 2,
+      xMax: Math.PI * 2,
+      yMin: -1.3,
+      yMax: 1.3,
+      xLabel: "x",
+      yLabel: "y",
+      xStep: 0,
+      yStep: 0.5,
+      piTicks: true,
+      grid: true,
+      equalScale: false,
+    },
+  ],
+  plots: [
+    { expr: "sin(x)", from: 0, to: 0, label: "y = \\sin x", attention: false },
+    { expr: "cos(x)", from: 0, to: 0, label: "y = \\cos x", attention: true },
+  ],
+  width: 420,
+  caption: "sin and cos from -2pi to 2pi",
 };
 
 /** Scripted drawings, so the board's annotation rendering can be built for free. */
@@ -69,6 +106,12 @@ function opsFor(request: TurnRequest, session: TutorSession): ResolvedOp[] {
   const ops: ResolvedOp[] = [];
 
   try {
+    // Asking for a graph gets one, whichever button it came from.
+    if (/graph|plot|sketch|sin|cos/i.test(request.text)) {
+      ops.push(resolve("draw_diagram", { ...mockGraph, near: target.id }));
+      return ops;
+    }
+
     switch (request.trigger) {
       case "check":
         ops.push(resolve("circle", { target: { id: target.id, box: null }, color: "mistake", note: null }));
