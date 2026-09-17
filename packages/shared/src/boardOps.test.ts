@@ -82,6 +82,40 @@ describe("board op schemas", () => {
     expect(unions.length, `union-typed parameters: ${unions.join(", ")}`).toBeLessThanOrEqual(16);
   });
 
+  // The tutor's real input for "draw a unit circle and mark 30 degrees with its
+  // coordinates". It was refused whole because the coordinate label ran three
+  // characters past a 60-character limit, and the student saw nothing drawn.
+  it("accepts the unit circle the tutor actually sent", () => {
+    const sent = {
+      axes: [
+        { xMin: -1.3, xMax: 1.3, yMin: -1.3, yMax: 1.3, xLabel: "x", yLabel: "y", xStep: 0, yStep: 0, piTicks: false, grid: false, equalScale: true },
+      ],
+      plots: [],
+      points: [
+        { name: "O", x: 0, y: 0 },
+        { name: "A", x: 1, y: 0 },
+      ],
+      constructions: [{ name: "P", kind: "polar", of: ["O"], angle: 30, distance: 1 }],
+      circles: [{ centre: "O", through: "A", radius: 0, attention: false }],
+      polygons: [],
+      segments: [
+        { from: "O", to: "P", dashed: false },
+        { from: "O", to: "A", dashed: false },
+      ],
+      arcs: [{ centre: "O", from: "A", to: "P", attention: true }],
+      angles: [{ at: "O", from: "A", to: "P", text: "30^{\\circ}", rightAngle: false }],
+      labels: [],
+      markedPoints: [
+        { at: "P", text: "(\\cos30^{\\circ}, \\sin30^{\\circ}) = (\\frac{\\sqrt3}{2}, \\frac{1}{2})", dot: true },
+      ],
+      near: "g1",
+      width: 400,
+      caption: "Unit circle with the point at 30°",
+    };
+    const parsed = boardOpSchemas.draw_diagram.safeParse(sent);
+    expect(parsed.error?.issues ?? []).toEqual([]);
+  });
+
   it("keeps the descriptions the model relies on", () => {
     const circle = jsonSchemaFor("circle") as { properties: { target: { properties: { id: { description: string } } } } };
     expect(circle.properties.target.properties.id.description).toContain("g4");

@@ -124,6 +124,9 @@ describe("resolve", () => {
       markedPoints: [],
       axes: [],
       plots: [],
+      constructions: [],
+      circles: [],
+      arcs: [],
       near: "g1",
       width: 200,
       caption: "",
@@ -155,6 +158,30 @@ describe("resolve", () => {
         (item) => x1 < item.box[2] && x2 > item.box[0] && y1 < item.box[3] && y2 > item.box[1],
       );
       expect(overlapsWork).toBe(false);
+    });
+
+    // Seen in a real turn: "(cos30°, sin30°) = (√3/2, 1/2)" ran far past the
+    // diagram's space, onto whatever sat beside it.
+    it("keeps room clear for a long label's text, not just the figure", () => {
+      const text = "(cos30°, sin30°) = (√3/2, 1/2)";
+      // Work just to the right of where the diagram would otherwise go.
+      const crowded = createResolver(
+        { ...mapping, items: [...items, { id: "g9", kind: "handwriting", box: [310, 250, 400, 330] }] },
+        () => "a1",
+      );
+      const op = crowded("draw_diagram", { ...spec, markedPoints: [{ at: "B", text, dot: true }] }) as {
+        parts: { id: string; at?: number[] }[];
+      };
+
+      const name = op.parts.find((p) => p.id === "a1.point_B")!;
+      // Back into snapshot pixels, then the text's reach: 9 world units a character, rightwards.
+      const [x, y] = [(name.at![0] - 100) * 0.5, (name.at![1] - 50) * 0.5];
+      const textBox = [x, y - 6, x + text.length * 9 * 0.5, y + 6];
+      for (const item of [...items, { box: [310, 250, 400, 330] }]) {
+        const [a, b, c, d] = item.box;
+        const overlaps = textBox[0] < c && textBox[2] > a && textBox[1] < d && textBox[3] > b;
+        expect(overlaps, `label text overlaps ${JSON.stringify(item.box)}`).toBe(false);
+      }
     });
 
     it("passes a diagram mistake back as something the tutor can fix", () => {

@@ -11,6 +11,9 @@ const empty = {
   markedPoints: [],
   axes: [],
   plots: [],
+  constructions: [],
+  circles: [],
+  arcs: [],
   near: "",
   width: 360,
   caption: "",
@@ -30,7 +33,7 @@ const triangle: DiagramSpec = {
     { at: "A", from: "B", to: "C", text: "\\theta", rightAngle: false },
   ],
   labels: [{ from: "A", to: "B", text: "4", attention: false }],
-  markedPoints: [{ at: "C", text: "C" }],
+  markedPoints: [{ at: "C", text: "C", dot: false }],
 };
 
 const placement = { x: 100, y: 100, width: 400, height: 300 };
@@ -94,12 +97,27 @@ describe("compileDiagram", () => {
     expect(label(parts, "d1.side_AB").at[1]).toBeGreaterThan(stroke(parts, "d1.AB").points[0][1]);
   });
 
-  it("keeps the whole drawing, labels included, inside the space it was given", () => {
-    const { box } = compile();
-    expect(box[0]).toBeGreaterThanOrEqual(placement.x);
-    expect(box[1]).toBeGreaterThanOrEqual(placement.y);
-    expect(box[2]).toBeLessThanOrEqual(placement.x + placement.width);
-    expect(box[3]).toBeLessThanOrEqual(placement.y + placement.height);
+  it("keeps the drawing inside the space it was given, and counts its writing in the box", () => {
+    const { parts, box } = compile();
+    for (const [x, y] of parts.flatMap((p) => (p.kind === "stroke" ? p.points : []))) {
+      expect(x).toBeGreaterThanOrEqual(placement.x);
+      expect(y).toBeGreaterThanOrEqual(placement.y);
+      expect(x).toBeLessThanOrEqual(placement.x + placement.width);
+      expect(y).toBeLessThanOrEqual(placement.y + placement.height);
+    }
+    // The "4" hangs below the base, so the box must reach below where it's anchored.
+    expect(box[3]).toBeGreaterThan(label(parts, "d1.side_AB").at[1]);
+  });
+
+  // Seen in a real turn: "(cos30°, sin30°) = (√3/2, 1/2)" beside a unit circle
+  // ran far past the diagram's box, which only counted where labels were anchored.
+  it("reports how far a long label's text reaches, not just where it starts", () => {
+    const long = "(cos30°, sin30°) = (√3/2, 1/2)";
+    const { parts, box } = compile({ ...triangle, markedPoints: [{ at: "B", text: long, dot: true }] });
+    const name = label(parts, "d1.point_B");
+    // B is at the bottom right, so its label starts beside it and runs rightwards.
+    expect(name.anchor).toBe("middle-left");
+    expect(box[2] - name.at[0]).toBeGreaterThanOrEqual(long.length * 8);
   });
 
   // Seen in a real diagram: "wall" sat on the vertical line and "ground"
@@ -288,9 +306,11 @@ describe("compileDiagram: graphs", () => {
     };
     const { parts } = compile(wide);
 
-    // The numbers go in the left margin, not beside an axis in mid-plot.
+    // The numbers go in the margins, not beside an axis in mid-plot.
     const plotLeft = Math.min(...stroke(parts, "d1.xaxis").points.map((p) => p[0]));
+    const plotBottom = Math.max(...stroke(parts, "d1.yaxis").points.map((p) => p[1]));
     expect(label(parts, "d1.ynum1").at[0]).toBeLessThanOrEqual(plotLeft);
+    expect(label(parts, "d1.xnum2").at[1]).toBeGreaterThanOrEqual(plotBottom);
 
     // And the two curve names end up on separate lines.
     const first = label(parts, "d1.plot1_label");
@@ -313,5 +333,152 @@ describe("compileDiagram: graphs", () => {
     expect(() => compile(bad("wibble(x)"))).toThrow(/wibble/);
     expect(() => compile(bad("x+100"))).toThrow(/never comes into view/);
     expect(() => compile({ ...empty, plots: sine.plots })).toThrow(/needs axes/);
+  });
+});
+
+describe("compileDiagram: circles and constructions", () => {
+  // The unit circle, with the point at 30° built rather than calculated.
+  const unitCircle: DiagramSpec = {
+    ...empty,
+    points: [
+      { name: "O", x: 0, y: 0 },
+      { name: "A", x: 1, y: 0 },
+    ],
+    constructions: [
+      { name: "P", kind: "polar", of: ["O"], angle: 30, distance: 1 },
+      { name: "F", kind: "foot", of: ["P", "O", "A"], angle: 0, distance: 0 },
+    ],
+    circles: [{ centre: "O", through: "A", radius: 0, attention: false }],
+    segments: [
+      { from: "O", to: "P", dashed: false },
+      { from: "P", to: "F", dashed: true },
+    ],
+    markedPoints: [
+      { at: "P", text: "P", dot: true },
+      { at: "O", text: "O", dot: false },
+    ],
+  };
+  const extent = (points: [number, number][]) => [
+    Math.max(...points.map((p) => p[0])) - Math.min(...points.map((p) => p[0])),
+    Math.max(...points.map((p) => p[1])) - Math.min(...points.map((p) => p[1])),
+  ];
+
+  it("draws a circle that stays round once it is on the board", () => {
+    const { parts } = compile(unitCircle);
+    const [width, height] = extent(stroke(parts, "d1.circle_O").points);
+    expect(width).toBeCloseTo(height, 6);
+    // Only the point asked for gets a dot.
+    expect(parts.some((p) => p.id === "d1.dot_P")).toBe(true);
+    expect(parts.some((p) => p.id === "d1.dot_O")).toBe(false);
+  });
+
+  it("puts a constructed point exactly where the maths says", () => {
+    const { parts } = compile(unitCircle);
+    const [o, p] = stroke(parts, "d1.OP").points;
+    const radius = extent(stroke(parts, "d1.circle_O").points)[0] / 2;
+    // P sits on the circle…
+    expect(Math.hypot(p[0] - o[0], p[1] - o[1])).toBeCloseTo(radius, 6);
+    // …at 30° above the horizontal (screen y runs downwards)…
+    expect((Math.atan2(o[1] - p[1], p[0] - o[0]) * 180) / Math.PI).toBeCloseTo(30, 6);
+    // …and the drop from P lands straight below it.
+    const [top, foot] = stroke(parts, "d1.PF").points;
+    expect(foot[0]).toBeCloseTo(top[0], 6);
+  });
+
+  it("draws an arc anticlockwise from one end to the other", () => {
+    const quarter: DiagramSpec = {
+      ...empty,
+      points: [
+        { name: "O", x: 0, y: 0 },
+        { name: "A", x: 2, y: 0 },
+        { name: "B", x: 0, y: 2 },
+      ],
+      arcs: [{ centre: "O", from: "A", to: "B", attention: false }],
+    };
+    const arc = stroke(compile(quarter).parts, "d1.arc_AB");
+    const [first, last] = [arc.points[0], arc.points[arc.points.length - 1]];
+    // From A on the right, round the top, to B: the short way, never dipping below A.
+    expect(last[0]).toBeLessThan(first[0]);
+    expect(arc.points.every((p) => p[1] <= first[1] + 1e-6)).toBe(true);
+  });
+
+  it("writes a point's name straight out from the circle it sits on", () => {
+    const { parts } = compile(unitCircle);
+    const name = label(parts, "d1.point_P");
+    const [o, p] = stroke(parts, "d1.OP").points;
+    expect(Math.hypot(name.at[0] - o[0], name.at[1] - o[1])).toBeGreaterThan(Math.hypot(p[0] - o[0], p[1] - o[1]));
+    // P is up and to the right, mostly right, so its name starts beside it and runs outwards.
+    expect(name.anchor).toBe("middle-left");
+  });
+
+  // Seen in a real diagram: a long side label ran back across its own line,
+  // because text always hung to the right of where it was placed.
+  it("keeps text running away from what it labels, whichever side that is", () => {
+    const { parts } = compile({
+      ...empty,
+      points: [
+        { name: "A", x: 0, y: 0 },
+        { name: "B", x: 0, y: 4 },
+        { name: "C", x: 3, y: 0 },
+      ],
+      polygons: [{ through: ["A", "B", "C"] }],
+      labels: [
+        { from: "A", to: "B", text: "wall", attention: false },
+        { from: "A", to: "C", text: "ground", attention: false },
+        { from: "B", to: "C", text: "ladder = 5 m", attention: false },
+      ],
+    });
+    expect(label(parts, "d1.side_AB").anchor).toBe("middle-right");
+    expect(label(parts, "d1.side_AC").anchor).toBe("top-centre");
+    expect(label(parts, "d1.side_BC").anchor).toBe("middle-left");
+  });
+
+  it("keeps ids unique, so no part silently replaces another on the board", () => {
+    const { parts } = compile({ ...triangle, segments: [{ from: "A", to: "B", dashed: true }] });
+    const ids = parts.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The polygon's side keeps the plain name, and the extra line gets a suffix.
+    expect(stroke(parts, "d1.AB").dashed).toBe(false);
+    expect(stroke(parts, "d1.AB_2").dashed).toBe(true);
+  });
+
+  it("keeps a circle round on axes, even if the tutor didn't ask for equal scales", () => {
+    const { parts } = compile({
+      ...unitCircle,
+      axes: [
+        {
+          xMin: -1.5,
+          xMax: 1.5,
+          yMin: -1.5,
+          yMax: 1.5,
+          xLabel: "x",
+          yLabel: "y",
+          xStep: 0.5,
+          yStep: 0.5,
+          piTicks: false,
+          grid: false,
+          equalScale: false,
+        },
+      ],
+    });
+    const [width, height] = extent(stroke(parts, "d1.circle_O").points);
+    expect(width).toBeCloseTo(height, 6);
+
+    // Both margins would write -1.5 into the bottom-left corner; only one does.
+    expect(parts.some((p) => p.id === "d1.xtick1")).toBe(true);
+    expect(parts.some((p) => p.id === "d1.xnum1")).toBe(false);
+    expect(parts.some((p) => p.id === "d1.ynum1")).toBe(true);
+  });
+
+  it("explains a circle, arc or construction it can't draw", () => {
+    expect(() => compile({ ...unitCircle, circles: [{ centre: "O", through: "", radius: 0, attention: false }] })).toThrow(
+      /radius above 0/,
+    );
+    expect(() => compile({ ...unitCircle, arcs: [{ centre: "O", from: "O", to: "A", attention: false }] })).toThrow(
+      /away from its centre/,
+    );
+    expect(() =>
+      compile({ ...unitCircle, constructions: [{ name: "P", kind: "polar", of: ["Z"], angle: 30, distance: 1 }] }),
+    ).toThrow(/Z, which isn't defined before it/);
   });
 });

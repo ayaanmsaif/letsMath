@@ -1,3 +1,6 @@
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   boardOpNames,
@@ -24,6 +27,26 @@ const PROMPT_ALLOWANCE_TOKENS = 3500;
 const SYSTEM_PROMPT = `${TUTOR_SYSTEM_PROMPT}\n\n${TOOL_GUIDANCE}`;
 
 type Emit = (event: TurnEvent) => Promise<void>;
+
+const TOOL_ERRORS_FILE =
+  process.env.TOOL_ERRORS_PATH ?? fileURLToPath(new URL("../../../../.usage/tool-errors.jsonl", import.meta.url));
+
+/**
+ * Keep every drawing that failed, with the tutor's input and the reason. A
+ * failure is otherwise invisible: the tutor only hears about it on the
+ * student's next message, and the student simply sees nothing drawn.
+ */
+async function recordToolError(sessionId: string, tool: string, input: unknown, err: unknown) {
+  const reason = err instanceof Error ? err.message : String(err);
+  console.warn(`[op] session=${sessionId.slice(0, 8)} ${tool} failed: ${reason}`);
+  try {
+    await mkdir(dirname(TOOL_ERRORS_FILE), { recursive: true });
+    const stack = err instanceof OpError || !(err instanceof Error) ? undefined : err.stack;
+    await appendFile(TOOL_ERRORS_FILE, `${JSON.stringify({ at: new Date().toISOString(), tool, reason, stack, input })}\n`);
+  } catch {
+    // Diagnostics must never break a turn.
+  }
+}
 
 let client: Anthropic | null = null;
 
@@ -148,6 +171,7 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
       } catch (err) {
         const message = err instanceof OpError ? err.message : "Couldn't draw that.";
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: message, is_error: true });
+        void recordToolError(session.id, block.name, block.input, err);
       }
     }
   };
