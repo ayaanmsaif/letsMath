@@ -32,6 +32,30 @@ function scriptFor(request: TurnRequest): string {
   }
 }
 
+/** A labelled 3-4-5 triangle, for exercising the diagram compiler without calling Claude. */
+const mockTriangle = {
+  points: [
+    { name: "A", x: 0, y: 0 },
+    { name: "B", x: 4, y: 0 },
+    { name: "C", x: 4, y: 3 },
+  ],
+  polygons: [{ through: ["A", "B", "C"] }],
+  segments: [],
+  angles: [
+    { at: "B", from: "A", to: "C", text: "", rightAngle: true },
+    { at: "A", from: "B", to: "C", text: "\\theta", rightAngle: false },
+  ],
+  labels: [
+    { from: "A", to: "B", text: "4", attention: false },
+    { from: "B", to: "C", text: "3", attention: false },
+    { from: "C", to: "A", text: "5", attention: true },
+  ],
+  markedPoints: [],
+  near: "",
+  width: 360,
+  caption: "",
+};
+
 /** Scripted drawings, so the board's annotation rendering can be built for free. */
 function opsFor(request: TurnRequest, session: TutorSession): ResolvedOp[] {
   const mapping = session.mapping;
@@ -54,18 +78,8 @@ function opsFor(request: TurnRequest, session: TutorSession): ResolvedOp[] {
         ops.push(resolve("highlight", { target: { id: target.id, box: null }, color: "attention" }));
         break;
       case "stuck": {
-        const corner = mapping.items.find((item) => item.corners && item.corners.length >= 3);
-        if (corner?.corners) {
-          ops.push(
-            resolve("angle_arc", {
-              vertex: corner.corners[0],
-              p1: corner.corners[1],
-              p2: corner.corners[2],
-              label: "\\theta",
-              color: "tutor",
-            }),
-          );
-        }
+        // Draw the worked figure, the way the tutor would when starting a problem.
+        ops.push(resolve("draw_diagram", { ...mockTriangle, near: target.id }));
         ops.push(
           resolve("write", {
             at: [target.box[0], Math.max(0, target.box[1] - 60)],

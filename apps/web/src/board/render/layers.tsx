@@ -43,6 +43,7 @@ export function ShapesLayer() {
         {tutor.map((s) => (
           <g
             key={s.id}
+            data-shape-id={s.id}
             className={`tutor-draw-on${pulsing.includes(s.id) ? " tutor-pulse" : ""}`}
             style={{ animationDelay: drawDelay(s) }}
           >

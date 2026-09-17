@@ -119,14 +119,19 @@ The AI describes *what* the diagram is, in maths units with named points. The sh
 - **Rendering:** each path becomes a tutor shape (animated draw-on, selectable), and `text` becomes our text or LaTeX shapes.
 - **Use:** real-world sketches (ladders, ramps, clocks, bearings, towers and angles of elevation), charts, and icons.
 
-### 4c-i. What strict tool schemas allow (learned in M3)
+### 4c-i. What strict tool schemas allow (learned in M3 and M4)
 
-The API refuses some JSON Schema constraints in strict tools, and every drawing tool is rejected if any one of them is wrong:
-- `minItems` may only be 0 or 1, so **points and boxes must be plain number arrays**, not fixed-length tuples;
-- `maxItems` isn't supported at all, so list lengths are capped on the server instead;
-- every property must be required, with unused ones nullable.
+Strict tools buy schema-valid arguments, but the API enforces limits that reject **every** tool at once if any one is broken. Three found so far, each only at request time:
+- `minItems` may only be 0 or 1, so **points and boxes are plain number arrays**, not fixed-length tuples;
+- `maxItems` isn't supported at all, so list lengths are capped on the server;
+- **at most 16 nullable or union-typed parameters across all tools together**, which is why the diagram schema has a list per kind of thing rather than one shape with nullable fields;
+- **the compiled grammar has a shared size budget**, so a large schema can push the whole set over. Strictness is per-tool: `draw_diagram` opts out while the small tools keep it.
 
-Lengths are therefore checked in `resolve.ts`, which turns a wrong one into a clear message the tutor sees and can correct. `npm run check:tools` validates every schema against the API for free (token counting), and a unit test pins both rules. M4's `draw_diagram` and `draw_svg` schemas must follow the same rules.
+Every property must still be required, with unused ones nullable.
+
+**The safety net doesn't depend on strict mode**: `resolve.ts` validates every call against the same zod schema and turns a mistake into a message the tutor can act on.
+
+**What catches these:** a unit test counts union-typed parameters and forbidden array constraints locally — trust that over the API, because `npm run check:tools` (token counting) accepts schemas the Messages API then rejects. Rejections are free, so probing with one real request costs nothing until it succeeds. `draw_svg` must respect the same budget.
 
 ### 4d. Housekeeping
 - `erase_drawings {ids | "all"}` removes the tutor's own annotations and diagrams.
@@ -287,7 +292,8 @@ letsMath/
 - **M2 Chat + AI sees:** chat UI with streaming SSE, snapshot, sizing, ink groups and digest, the server turn endpoint with caching and sessions, and the inspector. The spend ledger, budget guard, and mock tutor mode (§12) come **first**, and everything is built against mock mode before any paid call. The tutor discusses the board.
 - **M3 AI annotates:** annotation tools, streaming op application, target resolution and snapping, and **the corner finder (`shapes/recognize.ts`) with snapping to detected corners and sides** (digest shape notes, `g5.v1`/`g5.s1` part IDs). Also the hand-drawn tutor layer, draw-on animation and cursor, chips, and undo/hide/erase.
 - **M4 AI draws anything:**
-  - the `draw_diagram` compiler (geometry, markings, axes and plots, constructions);
+  - **Stage 1 done:** the `draw_diagram` compiler for core geometry — named points, polygons, segments, angle marks and right-angle squares, side and point labels — fitted into clear space on the board, with every part addressable (`d1.AB`, `d1.angle_B`). Verified with a real turn: asked for a diagram of "a ladder 5 m long leans against a wall at 65°", the tutor drew it correctly for 2.2p. *Known blemish:* a long side label can still touch its line, because the compiler places labels from an anchor without knowing how wide the rendered text will be; estimating width (as written notes already do) would close it.
+  - still to do: axes and plots, constructions;
   - label placement that avoids collisions;
   - auto and inline placement;
   - `update_diagram` with morph;

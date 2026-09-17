@@ -139,6 +139,11 @@ function penPointFor(op: ResolvedOp): [number, number] | null {
       return op.from;
     case "angle_arc":
       return op.vertex;
+    case "diagram": {
+      const first = op.parts[0];
+      if (!first) return null;
+      return first.kind === "stroke" ? first.points[0] : first.at;
+    }
     case "erase":
       return null;
   }
@@ -200,6 +205,27 @@ async function shapesFor(op: ResolvedOp): Promise<Shape[]> {
     }
     case "write":
       return [await labelShape(op, 0, COLORS[op.color], op.at as Pt, op.content, op.format === "latex", op.size)];
+    case "diagram": {
+      const shapes: Shape[] = [];
+      for (const [index, part] of op.parts.entries()) {
+        const colour = part.attention ? COLORS.attention : COLORS.tutor;
+        if (part.kind === "stroke") {
+          // Keep the compiler's id (d1.AB), so the tutor can point at a side later.
+          shapes.push({ ...stroke(op, index, colour, part.points as Pt[]), id: part.id, closed: part.closed });
+        } else {
+          const text = await labelShape(op, index, colour, part.at as Pt, part.text, looksLikeLatex(part.text), "s");
+          shapes.push({ ...text, id: part.id });
+        }
+      }
+      if (op.caption && shapes.length > 0) {
+        // Below everything drawn, not just the first part, so it can't land on a label.
+        const box = unionBoxes(shapes.map(shapeBounds))!;
+        shapes.push(
+          await labelShape(op, shapes.length, COLORS.tutor, [box.minX, box.maxY + 28], op.caption, false, "s"),
+        );
+      }
+      return shapes;
+    }
     case "erase":
       return [];
   }

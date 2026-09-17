@@ -5,6 +5,8 @@
 // The model works in snapshot image pixels. The server resolves each call
 // against the board and streams back a ResolvedOp in world units.
 import { z } from "zod";
+import type { DiagramPart } from "./diagram/compile";
+import { diagramSpecSchema } from "./diagram/schema";
 
 /** Colours carry meaning, so the tutor picks intent and the app owns the palette. */
 export const tutorColors = ["mistake", "correct", "attention", "tutor"] as const;
@@ -79,6 +81,9 @@ export const boardOpSchemas = {
     })
     .strict(),
 
+  /** Draw a figure from scratch, described in maths terms (PLAN.md §4b). */
+  draw_diagram: diagramSpecSchema,
+
   erase_drawings: z
     .object({
       // No length limits here: strict tool schemas reject minItems above 1 and
@@ -133,6 +138,7 @@ export type ResolvedOp =
       size: "s" | "m" | "l";
       color: TutorColor;
     }
+  | { id: string; kind: "diagram"; parts: DiagramPart[]; caption: string | null }
   | { id: string; kind: "erase"; ids: string[] | "all" };
 
 /** Lengths the API can't enforce for us, checked on the server instead. */

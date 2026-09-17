@@ -32,6 +32,7 @@ const DRAWING_LABELS: Record<ResolvedOp["kind"], string> = {
   arrow: "drew an arrow",
   angle_arc: "marked an angle",
   write: "wrote on the board",
+  diagram: "drew a diagram",
   erase: "cleared its marks",
 };
 
