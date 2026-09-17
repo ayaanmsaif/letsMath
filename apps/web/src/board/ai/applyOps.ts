@@ -3,7 +3,7 @@
 // Marks are stroked wobbly paths rather than pressure ink, so they can be
 // animated as if drawn. They live on the same board as the student's work but
 // are authored "tutor", so they can be hidden, erased, or undone on their own.
-import type { ResolvedOp, TutorColor } from "@letsmath/shared";
+import type { LabelAnchor, ResolvedOp, TutorColor } from "@letsmath/shared";
 import { panBy } from "../model/camera";
 import { useDraft } from "../model/draft";
 import { shapeBounds, unionBoxes } from "../model/geometry";
@@ -92,31 +92,63 @@ const stroke = (op: ResolvedOp, index: number, color: string, points: Pt[], widt
   closed: false,
 });
 
+/**
+ * Where a label's top-left goes, given the point it was placed by and how big it
+ * turned out. The compiler can't measure text, so it names a point and an
+ * anchor; only here is the rendered size known.
+ */
+function topLeftFor(anchor: LabelAnchor, at: Pt, w: number, h: number): Pt {
+  switch (anchor) {
+    case "top-centre":
+      return [at[0] - w / 2, at[1]];
+    case "bottom-centre":
+      return [at[0] - w / 2, at[1] - h];
+    case "middle-right":
+      return [at[0] - w, at[1] - h / 2];
+    default:
+      return at;
+  }
+}
+
 /** Maths labels render through MathJax; plain notes are text. */
-async function labelShape(op: ResolvedOp, index: number, color: string, at: Pt, content: string, latex: boolean, size: "s" | "m" | "l"): Promise<Shape> {
+async function labelShape(
+  op: ResolvedOp,
+  index: number,
+  color: string,
+  at: Pt,
+  content: string,
+  latex: boolean,
+  size: "s" | "m" | "l",
+  anchor: LabelAnchor = "top-left",
+): Promise<Shape> {
   const fontSize = FONT_SIZE[size];
   if (latex) {
     const { texToSvg } = await import("../math/mathjax");
     const rendered = await texToSvg(content);
+    const w = rendered.width * fontSize;
+    const h = rendered.height * fontSize;
+    const [x, y] = topLeftFor(anchor, at, w, h);
     const equation: EquationShape = {
       ...baseShape(op, index, color),
       type: "equation",
-      x: at[0],
-      y: at[1],
-      w: rendered.width * fontSize,
-      h: rendered.height * fontSize,
+      x,
+      y,
+      w,
+      h,
       latex: content,
       svg: rendered.svg,
       viewBox: rendered.viewBox,
     };
     return equation;
   }
+  const measured = measureText(content, fontSize);
+  const [x, y] = topLeftFor(anchor, at, measured.w, measured.h);
   const text: TextShape = {
     ...baseShape(op, index, color),
     type: "text",
-    x: at[0],
-    y: at[1],
-    ...measureText(content, fontSize),
+    x,
+    y,
+    ...measured,
     text: content,
     fontSize,
   };
@@ -211,9 +243,24 @@ async function shapesFor(op: ResolvedOp): Promise<Shape[]> {
         const colour = part.attention ? COLORS.attention : COLORS.tutor;
         if (part.kind === "stroke") {
           // Keep the compiler's id (d1.AB), so the tutor can point at a side later.
-          shapes.push({ ...stroke(op, index, colour, part.points as Pt[]), id: part.id, closed: part.closed });
+          const drawn = {
+            ...stroke(op, index, colour, part.points as Pt[], part.faint ? 1.4 : STROKE_WIDTH),
+            id: part.id,
+            closed: part.closed,
+          };
+          // A grid guides the eye; at full weight it cages the curve instead.
+          shapes.push(part.faint ? { ...drawn, opacity: 0.3 } : drawn);
         } else {
-          const text = await labelShape(op, index, colour, part.at as Pt, part.text, looksLikeLatex(part.text), "s");
+          const text = await labelShape(
+            op,
+            index,
+            colour,
+            part.at as Pt,
+            part.text,
+            looksLikeLatex(part.text),
+            "s",
+            part.anchor,
+          );
           shapes.push({ ...text, id: part.id });
         }
       }
