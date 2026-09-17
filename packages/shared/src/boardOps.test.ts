@@ -61,6 +61,27 @@ describe("board op schemas", () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * The API compiles every tool together and refuses more than 16 parameters
+   * that are nullable or union-typed. Token counting doesn't enforce it, so a
+   * live turn was the only thing that caught it: this counts them locally.
+   */
+  it("stays under the API's limit on union-typed parameters across all tools", () => {
+    const unions: string[] = [];
+    const walk = (node: unknown, path: string) => {
+      if (!node || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      if (Array.isArray(record.anyOf) || Array.isArray(record.type)) unions.push(path);
+      for (const [key, value] of Object.entries(record)) {
+        if (key === "description") continue;
+        walk(value, `${path}.${key}`);
+      }
+    };
+    for (const name of boardOpNames) walk(jsonSchemaFor(name), name);
+
+    expect(unions.length, `union-typed parameters: ${unions.join(", ")}`).toBeLessThanOrEqual(16);
+  });
+
   it("keeps the descriptions the model relies on", () => {
     const circle = jsonSchemaFor("circle") as { properties: { target: { properties: { id: { description: string } } } } };
     expect(circle.properties.target.properties.id.description).toContain("g4");

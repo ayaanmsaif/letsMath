@@ -8,6 +8,7 @@ const PHRASES: Record<ResolvedOp["kind"], string> = {
   arrow: "added an arrow",
   angle_arc: "marked the angle",
   write: "written it on the board",
+  diagram: "drawn a diagram",
   erase: "cleared my marks",
 };
 

@@ -14,17 +14,27 @@ const DESCRIPTIONS: Record<BoardOpName, string> = {
     "Mark an angle with a small arc and an optional label. The vertex snaps to a detected corner when one is close, so give the corner's approximate position.",
   write:
     "Write a short note, correction, or piece of maths on the board. Use format \"latex\" for maths. Place it in clear space, never over the student's work.",
+  draw_diagram:
+    "Draw a figure from scratch: a triangle for the question, a labelled right angle, a construction. Describe it in maths coordinates with named points (A, B, C) and say what to draw between them; the board works out every line, arc and label, so your coordinates only need to be mathematically right, not positioned on screen. It goes in clear space near what you name in placement.near.",
   erase_drawings: "Remove your own earlier annotations by id, or pass \"all\" to clear everything you've drawn.",
 };
 
 /**
- * Strict tools, with input streaming on so each drawing can be applied the
- * moment its call finishes rather than at the end of the reply.
+ * Strict mode compiles a grammar per tool, and all of them share one size
+ * budget. The diagram schema is far bigger than the rest put together, so it
+ * opts out: every call is still validated against the same zod schema on the
+ * way in, and a bad one comes back to the tutor as a message it can act on.
+ */
+const NON_STRICT: BoardOpName[] = ["draw_diagram"];
+
+/**
+ * The tutor's tools, with input streaming on so each drawing can be applied
+ * the moment its call finishes rather than at the end of the reply.
  */
 export const boardTools: Anthropic.Tool[] = boardOpNames.map((name) => ({
   name,
   description: DESCRIPTIONS[name],
-  strict: true,
+  strict: !NON_STRICT.includes(name),
   eager_input_streaming: true,
   input_schema: jsonSchemaFor(name) as Anthropic.Tool["input_schema"],
 }));

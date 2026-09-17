@@ -4,9 +4,12 @@
 // geometry of the board so annotations land exactly on the ink.
 import {
   boardOpSchemas,
+  compileDiagram,
+  DiagramError,
   MAX_ERASE_IDS,
   type BoardItem,
   type BoardOpName,
+  type DiagramSpec,
   type ResolvedOp,
   type WorldBox,
   type WorldPoint,
@@ -80,6 +83,39 @@ export function createResolver(mapping: SnapshotMapping, nextAnnotationId: () =>
     const fontPx = { s: 18, m: 26, l: 40 }[size] * mapping.scale;
     return [at[0], at[1], at[0] + content.length * fontPx * 0.55, at[1] + fontPx * 1.3];
   };
+
+  /**
+   * Somewhere a diagram of this size can sit without covering anything. Starts
+   * beside what the tutor named, then works outwards.
+   */
+  function findClearArea(width: number, height: number, near: string | null): PixelBox {
+    const occupied = [...mapping.items.map((i) => i.box), ...placedThisTurn];
+    const anchor = near ? byId.get(near)?.box : undefined;
+    const limitX = mapping.width ?? 1200;
+    const limitY = mapping.height ?? 1000;
+    const gap = 24;
+
+    const candidates: PixelPoint[] = anchor
+      ? [
+          [anchor[2] + gap, anchor[1]], // to the right of it
+          [anchor[0], anchor[3] + gap], // below it
+          [Math.max(8, anchor[0] - width - gap), anchor[1]], // to its left
+        ]
+      : [];
+    // Then sweep the board in rows, so something is always found.
+    for (let y = 8; y + height < limitY; y += 60) {
+      for (let x = 8; x + width < limitX; x += 80) candidates.push([x, y]);
+    }
+
+    for (const [x, y] of candidates) {
+      if (x < 0 || y < 0 || x + width > limitX || y + height > limitY) continue;
+      const box: PixelBox = [x, y, x + width, y + height];
+      if (!occupied.some((other) => overlaps(box, other))) return box;
+    }
+    // Nowhere is clear, so put it below everything rather than on top of the work.
+    const lowest = Math.max(8, ...occupied.map((b) => b[3]));
+    return [8, lowest + gap, 8 + width, lowest + gap + height];
+  }
 
   /** Slide a note clear of the work and of marks already made this turn. */
   function findClearSpot(at: PixelPoint, content: string, size: "s" | "m" | "l"): PixelPoint {
@@ -262,6 +298,30 @@ export function createResolver(mapping: SnapshotMapping, nextAnnotationId: () =>
           size: input.size,
           color: input.color,
         };
+      }
+      case "draw_diagram": {
+        const spec = parsed.data as DiagramSpec;
+        const width = Math.max(120, Math.min(560, spec.width || 360));
+        const height = width * 0.78;
+        const area = findClearArea(width, height, spec.near || null);
+        placedThisTurn.push(area);
+
+        try {
+          const compiled = compileDiagram(
+            spec,
+            {
+              x: toWorldPoint([area[0], area[1]])[0],
+              y: toWorldPoint([area[0], area[1]])[1],
+              width: toWorldLength(width),
+              height: toWorldLength(height),
+            },
+            id,
+          );
+          return { id, kind: "diagram", parts: compiled.parts, caption: spec.caption || null };
+        } catch (err) {
+          // Diagram problems are the tutor's to fix, so pass the reason back.
+          throw err instanceof DiagramError ? new OpError(err.message) : err;
+        }
       }
       case "erase_drawings": {
         const input = parsed.data as { ids: string[] };

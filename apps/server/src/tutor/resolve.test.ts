@@ -110,6 +110,57 @@ describe("resolve", () => {
     expect(op).toMatchObject({ kind: "write", at: [1500, 1450] });
   });
 
+  describe("diagrams", () => {
+    const spec = {
+      points: [
+        { name: "A", x: 0, y: 0 },
+        { name: "B", x: 4, y: 0 },
+        { name: "C", x: 4, y: 3 },
+      ],
+      polygons: [{ through: ["A", "B", "C"] }],
+      segments: [],
+      angles: [{ at: "B", from: "A", to: "C", text: "", rightAngle: true }],
+      labels: [],
+      markedPoints: [],
+      near: "g1",
+      width: 200,
+      caption: "",
+    };
+
+    /** Parts come back in world units; this puts them back into snapshot pixels. */
+    const pixelBoxOf = (op: { parts: { kind: string; points?: number[][]; at?: number[] }[] }) => {
+      const all = op.parts.flatMap((p) => (p.kind === "stroke" ? p.points! : [p.at!]));
+      const toPx = (world: number[]) => [(world[0] - 100) * 0.5, (world[1] - 50) * 0.5];
+      const pts = all.map(toPx);
+      return [
+        Math.min(...pts.map((p) => p[0])),
+        Math.min(...pts.map((p) => p[1])),
+        Math.max(...pts.map((p) => p[0])),
+        Math.max(...pts.map((p) => p[1])),
+      ];
+    };
+
+    it("keeps its part ids so the tutor can point at a side later", () => {
+      const op = resolver()("draw_diagram", spec) as { kind: string; parts: { id: string }[] };
+      expect(op.kind).toBe("diagram");
+      expect(op.parts.map((p) => p.id)).toEqual(expect.arrayContaining(["a1.AB", "a1.BC", "a1.CA", "a1.angle_B"]));
+    });
+
+    it("places the diagram in clear space, not over the student's work", () => {
+      const op = resolver()("draw_diagram", spec) as never;
+      const [x1, y1, x2, y2] = pixelBoxOf(op);
+      const overlapsWork = mapping.items.some(
+        (item) => x1 < item.box[2] && x2 > item.box[0] && y1 < item.box[3] && y2 > item.box[1],
+      );
+      expect(overlapsWork).toBe(false);
+    });
+
+    it("passes a diagram mistake back as something the tutor can fix", () => {
+      const broken = { ...spec, segments: [{ from: "A", to: "Z", dashed: false }] };
+      expect(() => resolver()("draw_diagram", broken)).toThrow(/No point called Z/);
+    });
+  });
+
   it("explains when a point or box is the wrong length", () => {
     expect(() => resolver()("arrow", { from: [1], to: [2, 3], label: null, color: "tutor" })).toThrow(
       /two numbers/,
