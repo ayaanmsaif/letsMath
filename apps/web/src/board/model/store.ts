@@ -40,10 +40,19 @@ export interface SavedBoard {
   nextZ: number;
   camera: Camera;
   background: Background;
+  /** Absent in boards saved before images could be added. */
+  images?: Record<string, string>;
 }
 
 interface BoardState {
   shapes: Shapes;
+  /**
+   * Image bytes as data URLs, kept beside the shapes rather than inside them so
+   * that dragging a photo doesn't copy it into the undo stack, and two copies of
+   * one photo share it. Data URLs specifically: a snapshot is a serialised SVG,
+   * and an SVG drawn as an image never fetches anything external.
+   */
+  images: Record<string, string>;
   nextNum: number;
   nextZ: number;
   history: History;
@@ -71,6 +80,8 @@ interface BoardState {
 
   /** Reserve an id, number, and stacking order for a new shape. */
   allocate: () => Pick<Shape, "id" | "num" | "z" | "createdAt">;
+  /** Keep an image's bytes and hand back the id a shape should point at. */
+  addImage: (dataUrl: string) => string;
   /** Apply a patch and record it as one undo step; a shared mergeKey joins steps. */
   commit: (patch: Patch, label: string, author?: Author, mergeKey?: string) => void;
   /** Change shapes without recording history (live drags); pair with record(). */
@@ -89,6 +100,7 @@ interface BoardState {
 
 export const useBoard = create<BoardState>()((set, get) => ({
   shapes: {},
+  images: {},
   nextNum: 1,
   nextZ: 1,
   history: emptyHistory(),
@@ -117,6 +129,12 @@ export const useBoard = create<BoardState>()((set, get) => ({
     const { nextNum, nextZ } = get();
     set({ nextNum: nextNum + 1, nextZ: nextZ + 1 });
     return { id: `s${nextNum}`, num: nextNum, z: nextZ, createdAt: Date.now() };
+  },
+
+  addImage: (dataUrl) => {
+    const id = `img_${Math.random().toString(36).slice(2, 10)}`;
+    set({ images: { ...get().images, [id]: dataUrl } });
+    return id;
   },
 
   commit: (patch, label, author = "student", mergeKey) => {
@@ -174,16 +192,21 @@ export const useBoard = create<BoardState>()((set, get) => ({
     set({ selection: [] });
   },
 
-  load: (saved) =>
+  load: (saved) => {
+    // Drop images nothing points at any more. They were kept while undo could
+    // still bring their shape back, but that history doesn't survive a reload.
+    const used = new Set(Object.values(saved.shapes).flatMap((s) => (s.type === "image" ? [s.imageId] : [])));
     set({
       shapes: saved.shapes,
+      images: Object.fromEntries(Object.entries(saved.images ?? {}).filter(([id]) => used.has(id))),
       nextNum: saved.nextNum,
       nextZ: saved.nextZ,
       camera: saved.camera,
       background: saved.background,
       history: emptyHistory(),
       selection: [],
-    }),
+    });
+  },
 }));
 
 /** Shapes sorted by stacking order. Memoised on the shapes object identity. */

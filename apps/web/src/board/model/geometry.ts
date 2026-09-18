@@ -121,12 +121,16 @@ function outline(shape: Shape): Vec[] {
       return shape.closed && shape.points.length > 2 ? [...shape.points, shape.points[0]] : shape.points;
     case "text":
     case "equation":
+    case "image":
       return [];
   }
 }
 
+/** Shapes that are a plain box: no outline to trace, and a click anywhere hits them. */
+const isBox = (shape: Shape) => shape.type === "text" || shape.type === "equation" || shape.type === "image";
+
 export function shapeBounds(shape: Shape): Box {
-  if (shape.type === "text" || shape.type === "equation") {
+  if (isBox(shape)) {
     return { minX: shape.x, minY: shape.y, maxX: shape.x + shape.w, maxY: shape.y + shape.h };
   }
   if (shape.type === "rect" || shape.type === "ellipse") {
@@ -158,7 +162,7 @@ function pointInPolygon(p: Vec, pts: Vec[]): boolean {
 /** Does a click at p (world units, with tolerance) hit the shape? */
 export function hitTestShape(shape: Shape, p: Vec, tolerance: number): boolean {
   if (!boxContains(expandBox(shapeBounds(shape), tolerance), p)) return false;
-  if (shape.type === "text" || shape.type === "equation") return true;
+  if (isBox(shape)) return true;
   const pts = outline(shape);
   if (polylineDistance(p, pts) <= strokeWidth(shape) / 2 + tolerance) return true;
   const closed = shape.type === "rect" || shape.type === "ellipse" || (shape.type === "polygon" && shape.closed);
@@ -169,7 +173,7 @@ export function hitTestShape(shape: Shape, p: Vec, tolerance: number): boolean {
 export function eraserHitsShape(shape: Shape, a: Vec, b: Vec, radius: number): boolean {
   const reach = radius + strokeWidth(shape) / 2;
   if (!boxesIntersect(expandBox(shapeBounds(shape), radius), expandBox(boxFromCorners(a, b), 0))) return false;
-  if (shape.type === "text" || shape.type === "equation") return true;
+  if (isBox(shape)) return true;
   const pts = outline(shape);
   if (pts.length === 1) return distToSegment(pts[0], a, b) <= reach;
   for (let i = 1; i < pts.length; i++) {
@@ -206,7 +210,9 @@ export function transformShape<S extends Shape>(shape: S, from: Box, to: Box): S
       return { ...shape, points: shape.points.map(map) };
     case "text":
     case "equation":
-      // Text keeps its proportions; it scales uniformly from its top-left corner.
+    case "image":
+      // These keep their proportions, scaling uniformly from the top-left corner.
+      // A stretched photo or a squashed equation always looks like a mistake.
       {
         const s = Math.min(sx, sy);
         const [x, y] = map([shape.x, shape.y]);

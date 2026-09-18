@@ -17,11 +17,18 @@ export async function loadSavedBoard(): Promise<void> {
 export function installAutosave(): () => void {
   let timer = 0;
   const unsubscribe = useBoard.subscribe((state, prev) => {
-    if (state.shapes === prev.shapes && state.camera === prev.camera && state.background === prev.background) return;
+    if (
+      state.shapes === prev.shapes &&
+      state.images === prev.images &&
+      state.camera === prev.camera &&
+      state.background === prev.background
+    ) {
+      return;
+    }
     clearTimeout(timer);
     timer = window.setTimeout(() => {
-      const { shapes, nextNum, nextZ, camera, background } = useBoard.getState();
-      const saved: SavedBoard = { version: 1, shapes, nextNum, nextZ, camera, background };
+      const { shapes, images, nextNum, nextZ, camera, background } = useBoard.getState();
+      const saved: SavedBoard = { version: 1, shapes, images, nextNum, nextZ, camera, background };
       set(KEY, saved).catch((err) => console.warn("Autosave failed", err));
     }, SAVE_DELAY_MS);
   });
