@@ -28,6 +28,7 @@ const SHAPE_NAMES: Record<Shape["type"], string> = {
   polygon: "polygon",
   text: "text",
   equation: "equation",
+  image: "picture",
 };
 
 function shapeDetail(shape: Shape): string {
@@ -40,6 +41,10 @@ function shapeDetail(shape: Shape): string {
       return shape.arrow ? " (arrow)" : "";
     case "polygon":
       return ` ${shape.points.length} corners, ${shape.closed ? "closed" : "open"}`;
+    case "image":
+      // The tutor can see it in the snapshot; this says it's a picture the
+      // student added, not something drawn on the board.
+      return " added by the student — read it from the snapshot";
     default:
       return "";
   }

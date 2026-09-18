@@ -84,6 +84,19 @@ export interface EquationShape extends ShapeBase {
   viewBox: string;
 }
 
+export interface ImageShape extends ShapeBase {
+  type: "image";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /**
+   * Key into the board's image table. The bytes live there rather than in the
+   * shape, so moving a photo doesn't copy it into every undo step.
+   */
+  imageId: string;
+}
+
 export type Shape =
   | InkShape
   | LineShape
@@ -91,7 +104,8 @@ export type Shape =
   | EllipseShape
   | PolygonShape
   | TextShape
-  | EquationShape;
+  | EquationShape
+  | ImageShape;
 
 export type ShapeType = Shape["type"];
 

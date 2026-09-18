@@ -4,6 +4,7 @@ import { panBy, screenToWorld, zoomAt } from "../model/camera";
 import { useDraft } from "../model/draft";
 import { useBoard } from "../model/store";
 import type { Camera, InkPoint, Vec } from "../model/types";
+import { addImagesToBoard, imageFilesFrom } from "../tools/images";
 import { getTool } from "../tools/registry";
 import { commitTextDraft } from "../tools/text";
 import type { BoardPointer } from "../tools/types";
@@ -212,6 +213,33 @@ export function Board({ children }: { children?: ReactNode }) {
       }
     };
 
+    /** Pictures land where they were dropped, or in the middle of the view when pasted. */
+    const dropImages = (files: File[], screen: Vec) => {
+      if (files.length === 0) return;
+      const world = screenToWorld(useBoard.getState().camera, screen);
+      void addImagesToBoard(files, world).then((problem) => {
+        if (problem) console.warn(problem);
+      });
+    };
+
+    const onDragOver = (e: DragEvent) => {
+      // Without this the browser opens the file instead of letting the board have it.
+      if (imageFilesFrom(e.dataTransfer).length > 0 || e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    const onDrop = (e: DragEvent) => {
+      const files = imageFilesFrom(e.dataTransfer);
+      if (files.length === 0) return;
+      e.preventDefault();
+      dropImages(files, screenOf(e));
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      const files = imageFilesFrom(e.clipboardData);
+      if (files.length === 0) return;
+      e.preventDefault();
+      dropImages(files, [viewport.width / 2, viewport.height / 2]);
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space" && !isTypingTarget(e.target) && !e.repeat) {
         spaceRef.current = true;
@@ -236,6 +264,9 @@ export function Board({ children }: { children?: ReactNode }) {
     el.addEventListener("pointerup", onUp);
     el.addEventListener("pointercancel", onCancel);
     el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("dragover", onDragOver);
+    el.addEventListener("drop", onDrop);
+    window.addEventListener("paste", onPaste);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => {
@@ -246,6 +277,9 @@ export function Board({ children }: { children?: ReactNode }) {
       el.removeEventListener("pointerup", onUp);
       el.removeEventListener("pointercancel", onCancel);
       el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("dragover", onDragOver);
+      el.removeEventListener("drop", onDrop);
+      window.removeEventListener("paste", onPaste);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       onToolChange();

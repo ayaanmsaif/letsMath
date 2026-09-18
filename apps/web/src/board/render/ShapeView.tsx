@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { HIGHLIGHTER_OPACITY, lineWidth } from "../model/style";
+import { useBoard } from "../model/store";
 import type { LineShape, Shape } from "../model/types";
 import { inkPath } from "./ink";
 
@@ -18,6 +19,8 @@ function arrowHead(shape: LineShape, width: number): string {
 }
 
 export const ShapeView = memo(function ShapeView({ shape, dimmed = false }: { shape: Shape; dimmed?: boolean }) {
+  // An image's bytes live in the board's image table, not in the shape.
+  const src = useBoard((state) => (shape.type === "image" ? state.images[shape.imageId] : undefined));
   const opacity = dimmed ? 0.2 : shape.opacity;
   const stroke = {
     stroke: shape.color,
@@ -78,6 +81,9 @@ export const ShapeView = memo(function ShapeView({ shape, dimmed = false }: { sh
           ))}
         </text>
       );
+    case "image":
+      // A data URL, so a serialised snapshot carries the picture with it.
+      return src ? <image href={src} x={shape.x} y={shape.y} width={shape.w} height={shape.h} opacity={opacity} /> : null;
     case "equation":
       return (
         <svg

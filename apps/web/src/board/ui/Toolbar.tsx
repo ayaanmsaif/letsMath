@@ -4,6 +4,7 @@ import {
   Eraser,
   Hand,
   Highlighter,
+  ImagePlus,
   Minus,
   MousePointer2,
   MoveUpRight,
@@ -15,9 +16,12 @@ import {
   Type,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { TOOL_SHORTCUTS } from "../input/shortcuts";
+import { screenToWorld } from "../model/camera";
 import { useBoard, type ToolId } from "../model/store";
+import { viewport } from "../render/viewport";
+import { addImagesToBoard, IMAGE_TYPES } from "../tools/images";
 
 interface ToolInfo {
   id: ToolId;
@@ -103,7 +107,50 @@ export function Toolbar() {
       {EXTRA_TOOLS.map((t) => (
         <ToolButton key={t.id} info={t} active={tool === t.id} onClick={() => setTool(t.id)} />
       ))}
+
+      <Divider />
+
+      <AddPicture />
     </div>
+  );
+}
+
+/**
+ * Adding a picture is an action rather than a tool, so it gets its own button.
+ * On a tablet the file picker offers the camera, which is how a student gets a
+ * textbook question onto the board. Dropping and pasting work too (Board.tsx).
+ */
+function AddPicture() {
+  const picker = useRef<HTMLInputElement>(null);
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Add picture"
+        onClick={() => picker.current?.click()}
+        className="group relative grid size-9 place-items-center rounded-xl text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900"
+      >
+        <ImagePlus className="size-[18px]" strokeWidth={1.75} />
+        <Tooltip label="Add picture" />
+      </button>
+      <input
+        ref={picker}
+        type="file"
+        accept={IMAGE_TYPES.join(",")}
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = [...(e.target.files ?? [])];
+          // Cleared so the same picture can be chosen again straight after.
+          e.target.value = "";
+          const middle = screenToWorld(useBoard.getState().camera, [viewport.width / 2, viewport.height / 2]);
+          void addImagesToBoard(files, middle).then((problem) => {
+            if (problem) console.warn(problem);
+          });
+        }}
+      />
+    </>
   );
 }
 
