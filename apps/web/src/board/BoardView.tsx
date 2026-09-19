@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import { PerfMeter } from "../dev/PerfMeter";
 import { TutorCursor } from "./ai/TutorCursor";
+import { useProblems } from "../problems/store";
 import { installShortcuts } from "./input/shortcuts";
 import { EquationEditor } from "./math/EquationEditor";
-import { installAutosave, loadSavedBoard } from "./model/persist";
 import { Board } from "./render/Board";
 import { BoardMenu, UndoRedo } from "./ui/BoardMenu";
 import { LookingOverlay } from "./ui/LookingOverlay";
@@ -16,16 +16,15 @@ const debug = new URLSearchParams(window.location.search).has("debug");
 /** The whiteboard with its floating chrome. */
 export function BoardView() {
   useEffect(() => {
-    let cancelled = false;
-    let disposeAutosave = () => {};
-    // Autosave starts only after loading, so an empty board never overwrites the saved one.
-    loadSavedBoard().then(() => {
-      if (!cancelled) disposeAutosave = installAutosave();
-    });
+    // Opens the problem last worked on, and starts saving it. Saving waits for
+    // that load, or an empty board would be written over the saved one.
+    void useProblems.getState().start();
     const disposeShortcuts = installShortcuts();
+    // Whatever is on screen when the tab closes is kept.
+    const saveNow = () => void useProblems.getState().flush();
+    window.addEventListener("pagehide", saveNow);
     return () => {
-      cancelled = true;
-      disposeAutosave();
+      window.removeEventListener("pagehide", saveNow);
       disposeShortcuts();
     };
   }, []);

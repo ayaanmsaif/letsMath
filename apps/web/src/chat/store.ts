@@ -55,6 +55,8 @@ interface ChatState {
   serverOnline: boolean | null;
 
   send: (trigger: TurnTrigger, text: string) => Promise<void>;
+  /** Show a saved conversation. Its id is the tutor's session id on the server. */
+  load: (saved: { sessionId: string; messages: ChatMessage[] }) => void;
   newSession: () => void;
   refreshUsage: () => Promise<void>;
 }
@@ -150,6 +152,11 @@ export const useChat = create<ChatState>()((set, get) => ({
       window.setTimeout(() => useDraft.getState().set({ tutorCursor: null }), 900);
       if (!mock) void get().refreshUsage();
     }
+  },
+
+  load: ({ sessionId, messages }) => {
+    // A reply streaming into the old problem must not land in the new one.
+    set({ sessionId, messages, busy: false, looking: false, lastLook: null });
   },
 
   newSession: () => {

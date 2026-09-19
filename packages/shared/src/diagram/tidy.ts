@@ -27,6 +27,29 @@ const LISTS = [
 /** Text fields inside those lists, which end up written on the board. */
 const WRITTEN = ["text", "label", "xLabel", "yLabel", "expr"] as const;
 
+/**
+ * Fields an entry may leave out, and what they mean when missing. A midpoint has
+ * no angle and a circle given a point on it has no radius, so the tutor drops
+ * them — and the whole diagram was being refused over it, at the cost of a
+ * round each time.
+ *
+ * Only fields with an obvious meaning when absent are here. A point's
+ * coordinates, a construction's `of`, a circle's centre and a segment's ends all
+ * carry the maths: filling those in would draw something quietly wrong, so they
+ * are left to be refused.
+ */
+const WHEN_ABSENT: Record<string, Record<string, string | number | boolean>> = {
+  axes: { xLabel: "", yLabel: "", xStep: 0, yStep: 0, piTicks: false, grid: false, equalScale: false },
+  plots: { from: 0, to: 0, label: "", attention: false },
+  constructions: { angle: 0, distance: 0 },
+  circles: { through: "", radius: 0, attention: false },
+  segments: { dashed: false },
+  arcs: { attention: false },
+  angles: { text: "", rightAngle: false },
+  labels: { text: "", attention: false },
+  markedPoints: { text: "", dot: false },
+};
+
 /** Kept in step with schema.ts, where a test checks that tidied input passes. */
 const DEFAULT_WIDTH = 360;
 const MAX_NEAR = 40;
@@ -34,10 +57,16 @@ const MAX_NEAR = 40;
 /** An id names a group, a shape, or a part of one: g4, #12, d1, g4.s2. */
 const IS_ID = /^[#a-z]+\d+(\.[a-z]+\d*)?$/i;
 const HAS_ID = /(?:^|[\s(])([gad]\d+|#\d+)(?:\.[a-z]+\d*)?\b/i;
-/** Tool-call markup that leaked into a value. It must never reach the board. */
-const MARKUP = /<\/?[a-z:]*parameter[^>]*>/gi;
+/**
+ * Tool-call markup that leaked into a value, which must never reach the board.
+ * Any tag at all, not only a parameter one: the leaks seen so far include
+ * </antml_parameter> and a stray <antml name name="at">. Maths never contains a
+ * whole tag, so this can't eat anything real.
+ */
+const MARKUP = /<\/?[a-z][^<>]*>/gi;
 
-const strip = (text: string) => text.replace(MARKUP, " ").replace(/\s+/g, " ").trim();
+export const stripMarkup = (text: string) => text.replace(MARKUP, " ").replace(/\s+/g, " ").trim();
+const strip = stripMarkup;
 
 export function tidyDiagramInput(raw: unknown): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
@@ -51,6 +80,9 @@ export function tidyDiagramInput(raw: unknown): unknown {
       const entry = { ...(item as Record<string, unknown>) };
       for (const field of WRITTEN) {
         if (typeof entry[field] === "string") entry[field] = strip(entry[field] as string);
+      }
+      for (const [field, absent] of Object.entries(WHEN_ABSENT[list] ?? {})) {
+        if (typeof entry[field] !== typeof absent) entry[field] = absent;
       }
       return entry;
     });
@@ -66,4 +98,26 @@ export function tidyDiagramInput(raw: unknown): unknown {
   tidied.near = IS_ID.test(near) && near.length <= MAX_NEAR ? near : (near.match(HAS_ID)?.[1] ?? "");
 
   return tidied;
+}
+
+/**
+ * The same care for a request to work a number out. Seen for real: the model
+ * slipped out of JSON mid-call and left tag markup in `at`, which refused a
+ * check whose expression and claim were both perfectly good. Being strict
+ * doesn't prevent it — strictness fixes the shape of the JSON, not what ends up
+ * inside a string.
+ */
+export function tidyCheckInput(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const given = raw as Record<string, unknown>;
+  const text = (key: string) => (typeof given[key] === "string" ? strip(given[key] as string) : "");
+
+  // Values look like "x=4". Anything left without an equals sign is debris.
+  const at = text("at");
+  return {
+    expr: text("expr"),
+    claim: text("claim"),
+    at: at.includes("=") ? at : "",
+    degrees: given.degrees !== false,
+  };
 }

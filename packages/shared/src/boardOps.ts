@@ -101,10 +101,14 @@ export type BoardOpInput<K extends BoardOpName = BoardOpName> = z.infer<(typeof 
 export const boardOpNames = Object.keys(boardOpSchemas) as BoardOpName[];
 
 /** JSON Schema for strict tool use: every property required, nothing extra allowed. */
-export function jsonSchemaFor(name: BoardOpName): Record<string, unknown> {
-  const { $schema, ...schema } = z.toJSONSchema(boardOpSchemas[name], { io: "input" }) as Record<string, unknown>;
+export function toToolSchema(schema: z.ZodType): Record<string, unknown> {
+  const { $schema, ...rest } = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
   void $schema;
-  return schema;
+  return rest;
+}
+
+export function jsonSchemaFor(name: BoardOpName): Record<string, unknown> {
+  return toToolSchema(boardOpSchemas[name]);
 }
 
 // ---------- what the server streams back ----------

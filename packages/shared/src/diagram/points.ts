@@ -66,15 +66,11 @@ export function resolvePoints(explicit: PointInput[], constructions: Constructio
     if (made.of.length !== count) {
       throw new DiagramError(`${made.name} is a ${made.kind}, which is built from ${example}.`);
     }
-    const [p, q, r, s] = made.of.map((name) => {
-      const point = points.get(name);
-      if (!point) {
-        throw new DiagramError(
-          `${made.name} is built from ${name}, which isn't defined before it. List points before the constructions that use them.`,
-        );
-      }
-      return point;
-    });
+  }
+
+  /** Build one point whose parts are all known by now. */
+  const build = (made: ConstructionInput) => {
+    const [p, q, r, s] = made.of.map((name) => points.get(name)!);
 
     switch (made.kind) {
       case "midpoint":
@@ -112,6 +108,27 @@ export function resolvePoints(explicit: PointInput[], constructions: Constructio
         break;
       }
     }
+  };
+
+  // Constructions are taken in whatever order they can be built, not the order
+  // they were written. The tutor lists them as it thinks of them — the midpoint
+  // before the two ends it joins — and refusing that wasted a whole round.
+  let waiting = [...constructions];
+  while (waiting.length > 0) {
+    const stuck: ConstructionInput[] = [];
+    for (const made of waiting) {
+      if (made.of.every((name) => points.has(name))) build(made);
+      else stuck.push(made);
+    }
+    if (stuck.length === waiting.length) {
+      // Nothing moved, so what's left is genuinely missing or builds on itself.
+      const first = stuck[0];
+      const missing = first.of.find((name) => !points.has(name));
+      throw new DiagramError(
+        `${first.name} is built from ${missing}, which isn't defined anywhere. Add it, or check that the points don't depend on each other in a loop.`,
+      );
+    }
+    waiting = stuck;
   }
 
   return points;

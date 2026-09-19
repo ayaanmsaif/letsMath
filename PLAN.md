@@ -180,18 +180,19 @@ The history is strictly append-only (thinking blocks kept verbatim).
   - Keep boards tidy: at most about 3 annotations per turn.
   - 2–4 sentence replies, with LaTeX in `$…$`.
   - If handwriting is unclear, use `look_closer` or ask.
-- **Models** are env-configurable (`TUTOR_MODEL`, `TUTOR_EFFORT`, `WATCH_MODEL`). Day-to-day testing uses **`claude-sonnet-5`** at low effort to fit the £5 testing budget (§12). In M6 the eval compares it with `claude-haiku-4-5` and, on a small subset, `claude-opus-5`, and **you choose the production default from measured quality vs. $**. My expectation is Sonnet 5 at low effort. Diagram quality is part of that eval.
+- **Model and effort, decided by the eval: `claude-sonnet-5` at medium effort, everywhere.** Medium took 42 of 43 checks, drew every hard figure correctly, and never replied with a drawing and no words — which low did in two of eleven drawing turns. The saving from routing cheaper turns to low was smaller than the run-to-run variation in what the prompt cache happened to do, so it wasn't worth the extra moving part. The router is still there in `routing.ts`, tested and reachable with `TUTOR_EFFORT=auto`, if the cost of a turn ever starts to matter more than the consistency.
+
+  **Why not Haiku:** it draws a described figure well, but asked for a bearing of 060 it drew the line 30 degrees out, reading the bearing as a plain angle. Nothing in the wording marks that question as the dangerous one, so no router could keep Haiku away from it, and a wrong diagram that looks right is the worst failure a tutor has. **Why not two models:** effort is a request setting, but the prompt cache is per model, so switching models mid-conversation rewrites about 6,700 tokens of tool definitions at the new model's price. Changing effort costs nothing extra; changing model costs more than the cheaper model saves.
+
+  `TUTOR_EFFORT` pins every turn to one level when set, which is how the eval compares them; unset, it means "auto".
 - **Context control:** a rolling reset about every 12 tutor turns or 40k tokens. The new context starts with a summary, the current snapshot, and the digest (existing diagrams keep their IDs).
 - **Budget guards:**
   - a per-session $ counter from `usage`; `SESSION_BUDGET_USD` pauses watch mode when it's exceeded;
   - a total development spend ledger; `DEV_BUDGET_USD` (§12) blocks Claude calls once the testing budget is used up.
 
-**Watch mode** (the AI sees you work without being asked; `/api/tutor/watch`):
-- **Trigger:** 3s after the pen goes idle, only if there's new ink, at most once every 15s.
-- **Triage call:** a cheap structured-output request (`WATCH_MODEL`, default `claude-haiku-4-5`) with a crop plus the digest. It returns `{status: on_track|slip|error|stuck|finished|unclear, confidence, target_id, reason}`.
-- **Escalation:** only `error` with confidence ≥0.7, or `stuck` (no progress for 45s or more), becomes a full tutor turn, and it opens with a gentle nudge.
-- **Limits:** at most 1 unprompted intervention per 60s.
-- **Student control:** Off / Gentle / Active.
+**Working a number out** (`check_maths`). Everywhere else the model is kept away from arithmetic: constructions place points, the evaluator draws curves. Marking was the hole left, and the tutor was judging a student's numbers by mental arithmetic — weakest exactly where trigonometry lives, in decimals, degrees against radians, and rounding. It now asks the board, which answers with the same evaluator that draws the graphs, and the answer comes back within the same turn. It also checks a claimed solution by substitution, and tells whether two expressions are the same by trying values. **Tolerance comes from how precisely the claim was written**, so a student who rounds 2.1131 to 2.11 is right: telling a student their correct work is wrong costs their trust, and that is not recoverable.
+
+**Watch mode: dropped.** The plan was for the tutor to watch and intervene unasked. A real tutor lets a student attempt the work and waits to be asked, and productive struggle is where the learning happens; interrupting at the first hesitation prevents the very thing the tutor is for. It was also about **a third of a session's running cost**, spent mostly to conclude that nothing was wrong. "Check my work" is the student-initiated form of the same thing and is worth more. If the early-error case ever needs catching — a slip in line one that the next five lines are built on — the respectful form is a quiet marker the student can tap, not the tutor speaking. `look_closer` survives from that milestone: that one is the tutor asking for a closer look at handwriting it can't read, which makes it more accurate rather than more intrusive.
 
 ## 6. UI (modern, minimal)
 
@@ -216,7 +217,7 @@ The history is strictly append-only (thinking blocks kept verbatim).
 - **Board chrome:** undo/redo top-left. Zoom −/%/+, fit (`Shift+1`), and reset (`Shift+0`) bottom-right. Background picker: blank, dots, grid, lined. Show/hide and clear tutor drawings. Clear board (with confirm).
 - **"Tidy shape":** available from the context menu, or suggested by the tutor. It swaps a recognised squiggly shape (§3 item 5) for a clean polygon or ellipse. It's a single undoable action.
 - **Input handling:** Pointer Events with `getCoalescedEvents()`, pointer capture, `touch-action:none`. Once a pen is detected, touch only pans and pinch-zooms (palm rejection).
-- **Autosave:** IndexedDB per session.
+- **Problems:** one problem is one board and the conversation about it, saved together in IndexedDB under the problem's id — which is also the tutor's session id, so reopening can pick up where it left off. The header lists them newest first, titled from the first thing the student asked, with **New problem** beside it. Before this, a refresh brought the board back but not the conversation, and the tutor reappeared with no memory of work it had just been discussing.
 - **Dev inspector** (`?debug=1`): the last snapshot with the model's coordinates and snapped/placed results overlaid (including detected corners and sides), the digest, raw tool JSON (including diagram specs), validation errors, and tokens and $ per turn. It has a **"Save as eval fixture"** button.
 
 ## 6b. Smoothness targets (measured, not hoped for)
@@ -308,8 +309,41 @@ letsMath/
   - build-order animation;
   - **"Tidy shape"**;
   - **ends with a polish pass** against §6b: AI timing targets, animation feel, and never blocking.
-- **M5 Watch mode + look_closer:** idle and diff tracking, triage endpoint, intervention policy, and the crop round-trip.
-- **M6 Eval + cost tuning:**
+- **M5 look_closer:** the crop round-trip, for handwriting the tutor can't read. (Watch mode was dropped — see §5.)
+- **Done alongside M4:** the arithmetic check (§5), and problems that persist with their conversations (§6). Pictures can be dropped, pasted or photographed onto the board, and the tutor reads them from the snapshot.
+- **M6 Eval — first results.** Six cases run through the real turn path (`npm run eval`), scored mechanically: did the drawing compile, is the circle round, is the radius at 30°, did the tutor work the number out before judging it, did it say something rather than only draw, did it withhold the answer when asked for a hint.
+
+  | | checks | cost, 6 cases | median first word | worst |
+  |---|---|---|---|---|
+  | Sonnet 5, medium | 23/23 | 4.8p | 4.1s | 13s |
+  | Haiku 4.5 | 22/23 | 5.7p | 0.9s | 1.6s |
+  | Sonnet 5, low | 21/23 | 16.2p | 3.1s | 13.6s |
+
+  What it found, none of which was visible before:
+  - **Haiku wouldn't run at all**, three times over: it refuses adaptive thinking, refuses the effort setting, and compiles a smaller grammar than Sonnet so it rejected the strict tool set. It now runs with those off and every tool loose. `check:tools` checks every model we might use, so this is caught for free next time.
+  - **Constructions were being refused over the order they were written in** ("Px is built from A, which isn't defined before it"). The tutor lists them as it thinks of them. They are now resolved by dependency, which took the unit circle from 5/6 in two rounds at 2.1p to 6/6 in one round at 0.8p.
+  - **A position given where a point's name belongs** is now accepted: asked to mark the top of a sine curve, the tutor sent (1.5708, 1), because that point has no name to give.
+  - **Cost is decided by whether the prompt cache hits, not by list price.** Haiku wrote the full prefix on nearly every turn while Sonnet reused it, so they cost about the same despite Haiku being half the price on paper. The same six cases cost Sonnet between 4.8p and 14.9p across runs. Worth understanding before choosing on cost.
+  - **The first-word spikes are Sonnet's, not the network's.** Haiku never exceeded 1.6s; Sonnet ranged from 0.2s to 25s at both effort levels. Still unexplained.
+  - **A brittle check is worse than no check.** "rounded-answer" failed while the tutor was entirely right, because it said "spot on" rather than "correct". The check now looks for the value, not the wording.
+
+  **Then five harder drawings were added**, each aimed at a way a cheaper model goes wrong: a bearing (measured clockwise from north, while our construction measures anticlockwise from east), a curve with an asymptote, an area between two curves needing shading the board can't do, an elevation problem whose figure has to be worked out, and a trapezium described in words.
+
+  | on the five hard cases | result | cost, 11 cases | median first word |
+  |---|---|---|---|
+  | Haiku 4.5 | 17/20 — **drew the bearing at 60° instead of 30°** | 10.6p | 0.8s |
+  | Sonnet 5, low | 18/20 — bearing right, silent twice | 14.3p (hard only) | 2.1s |
+  | Sonnet 5, medium | 19/20 — bearing right, silent never | 34.1p | 3.0s |
+
+  **Haiku can't be the drawing tier.** It is dependable at transcribing a figure someone has already worked out — the trapezium's parallel sides came out in the right ratio, the asymptote broke properly, the elevation problem got both angle marks — but it read the bearing as a plain angle and drew a neat, confident, wrong diagram. Sonnet got it right at both effort levels, so it is a difference in the model rather than a gap in the prompt. A failure that looks correct is the worst kind for a tutor, and nothing in the request would let a router know in advance that this question was the dangerous one.
+
+  **Opus wasn't run.** It was there in case Sonnet struggled on the hard cases; Sonnet took 19 of 20, so the measurement couldn't have changed the decision and would have cost 20p.
+
+  **Drawing in silence is the soft failure**, appearing twice at low effort and once on Haiku, never at medium. The student still sees the drawing and a chip describing it, so it degrades the experience rather than breaking it.
+
+  **No model change yet.** The checks measure that the tutor works, not that it teaches well, and teaching is where Sonnet would earn its keep. Next: judge the quality of the explanations, and chase the latency.
+
+- **M6 remaining:**
   - Annotation fixtures (planted trig errors → expected target group).
   - **Diagram prompts:** "right triangle with 35° and hypotenuse 10, label the opposite side x", "sketch y=sin x and y=cos x for 0–2π and mark where they meet", "unit circle with 30°, 45°, 60° and their coordinates", "ladder 5m against a wall at 70°", "bearing of 060° from A to B".
   - Scoring: compile success, geometric correctness checks (right angles are 90°, side ratios), a vision-judge score of the rendered result, "no answer giveaway", and $/turn.
@@ -386,7 +420,8 @@ This is why diagrams are preferred and `draw_svg` is the catch-all. A few diagra
   4. Ask **"draw a unit circle and mark 30° with its coordinates"**. The diagram builds in free space in construction order, and you can move and erase it.
   5. Follow up with "highlight the sine". The tutor targets `d1.*` via `update_diagram`/`highlight`.
   6. Ask for "a ladder leaning against a wall at 70°". It uses `draw_diagram` or `draw_svg` and renders cleanly.
-  7. Toggle watch mode and confirm it stays silent while you're on track.
+  7. Write `x = 5 cos 65 = 2.7` and ask for it to be checked. The tutor works the value out with `check_maths` before judging it, marks the line wrong, and writes 2.11. Rounding it to 2.11 yourself is accepted.
+  8. Reload the page: the board and the conversation both come back. Start a new problem, then switch between them from the header.
 - **Browser automation** (Playwright via the `run` skill) captures screenshots of tool states, an annotated turn, and a diagram turn.
 - **Eval:** `npm run eval -- --model claude-sonnet-5 --effort low` runs batched. It prints the estimated cost and asks before spending, then reports annotation hit rate, diagram correctness and judge scores, and $/turn.
 

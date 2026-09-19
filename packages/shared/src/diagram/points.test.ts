@@ -69,11 +69,24 @@ describe("resolvePoints", () => {
     expectAt(points.get("N"), 3, 2);
   });
 
+  // Seen in the eval: the tutor writes constructions as it thinks of them, and
+  // refusing a diagram over the order they were listed in wastes a whole round.
+  it("doesn't mind what order the constructions are written in", () => {
+    const points = resolvePoints(square, [made("N", "midpoint", ["M", "C"]), made("M", "midpoint", ["A", "B"])]);
+    expectAt(points.get("N"), 3, 2);
+  });
+
+  it("still says so when a point is genuinely missing, or waits on itself", () => {
+    expect(() => resolvePoints(square, [made("N", "midpoint", ["M", "C"])])).toThrow(/M, which isn't defined/);
+    const loop = [made("P", "midpoint", ["Q", "A"]), made("Q", "midpoint", ["P", "B"])];
+    expect(() => resolvePoints(square, loop)).toThrow(/loop/);
+  });
+
   it("explains what it needs instead of guessing", () => {
     // AB and DC are both horizontal.
     expect(() => resolvePoints(square, [made("X", "intersection", ["A", "B", "D", "C"])])).toThrow(/parallel/);
     expect(() => resolvePoints(square, [made("M", "midpoint", ["A"])])).toThrow(/built from the two ends/);
-    expect(() => resolvePoints(square, [made("M", "midpoint", ["A", "Z"])])).toThrow(/Z, which isn't defined before it/);
+    expect(() => resolvePoints(square, [made("M", "midpoint", ["A", "Z"])])).toThrow(/Z, which isn't defined/);
     expect(() => resolvePoints(square, [made("A", "midpoint", ["B", "C"])])).toThrow(/defined twice/);
     expect(() => resolvePoints(square, [made("F", "foot", ["C", "A", "A"])])).toThrow(/two different points/);
   });

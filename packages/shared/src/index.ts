@@ -1,4 +1,5 @@
 export * from "./boardOps";
+export * from "./checkMaths";
 export * from "./diagram/compile";
 export * from "./diagram/plot";
 export * from "./diagram/schema";

@@ -1,11 +1,15 @@
-// Evaluating and sampling functions for graphs (PLAN.md §4b).
+// Reading, evaluating and sampling maths expressions (PLAN.md §4b).
 //
 // A small parser rather than a maths library: the tutor writes things like
-// "sin(x)", "x^2 - 3" or "2sin(x)+1", and a graph needs those evaluated at a
-// few hundred points. Nothing here executes the string — unknown names are
-// rejected outright — so a model's output can never run as code.
+// "sin(x)", "x^2 - 3" or "5*cos(65)", and the board needs those evaluated —
+// to draw a curve, or to check a number before telling a student it's wrong.
+// Nothing here executes the string, and unknown names are refused, so a model's
+// output can never run as code.
 
 export class ExpressionError extends Error {}
+
+/** Values for the letters an expression uses. */
+export type Values = Record<string, number>;
 
 type Token = { kind: "number"; value: number } | { kind: "name"; value: string } | { kind: "op"; value: string };
 
@@ -29,7 +33,13 @@ const FUNCTIONS: Record<string, (x: number) => number> = {
   round: Math.round,
 };
 
+/** Angles go in as degrees, or come out as degrees, when the caller says so. */
+const ANGLE_IN = new Set(["sin", "cos", "tan"]);
+const ANGLE_OUT = new Set(["asin", "acos", "atan"]);
+
 const CONSTANTS: Record<string, number> = { pi: Math.PI, e: Math.E };
+
+const DEGREE = Math.PI / 180;
 
 /** Tidy up the LaTeX-isms a model might reach for, before parsing. */
 function normalise(source: string): string {
@@ -40,6 +50,7 @@ function normalise(source: string): string {
     .replace(/\\pi/g, "pi")
     .replace(/\\(sin|cos|tan|sqrt|ln|log|exp|abs)/g, "$1")
     .replace(/[{}]/g, (brace) => (brace === "{" ? "(" : ")"))
+    .replace(/°|degrees|deg\b/g, "")
     .replace(/\s+/g, "");
 }
 
@@ -67,13 +78,29 @@ function tokenise(source: string): Token[] {
   return tokens;
 }
 
-/**
- * Turn an expression in x into a function. Throws ExpressionError if it can't
- * be read, so the tutor gets told rather than the graph coming out empty.
- */
-export function compileExpression(source: string, variable = "x"): (x: number) => number {
+interface ParseOptions {
+  /** Angles in degrees rather than radians. */
+  degrees?: boolean;
+  /**
+   * Which names stand for values. A plot knows its one variable; a formula
+   * being checked takes any single letter, so "2a + b" works, while a
+   * misspelled function like "wibble(x)" is still refused.
+   */
+  known?: string[];
+  letters?: boolean;
+}
+
+interface Parsed {
+  evaluate: (values: Values) => number;
+  /** Letters the expression uses, in the order they first appeared. */
+  variables: string[];
+}
+
+function parse(source: string, options: ParseOptions): Parsed {
   const tokens = tokenise(normalise(source));
   if (tokens.length === 0) throw new ExpressionError("That expression is empty.");
+  const known = new Set(options.known ?? []);
+  const variables: string[] = [];
   let position = 0;
 
   const peek = () => tokens[position];
@@ -87,37 +114,37 @@ export function compileExpression(source: string, variable = "x"): (x: number) =
   };
 
   // Precedence climbing: + - lowest, then * /, then ^, then unary minus.
-  const parseExpression = (): ((x: number) => number) => {
+  const parseExpression = (): Parsed["evaluate"] => {
     let left = parseTerm();
     for (;;) {
       if (eat("+")) {
         const right = parseTerm();
         const previous = left;
-        left = (x) => previous(x) + right(x);
+        left = (v) => previous(v) + right(v);
       } else if (eat("-")) {
         const right = parseTerm();
         const previous = left;
-        left = (x) => previous(x) - right(x);
+        left = (v) => previous(v) - right(v);
       } else return left;
     }
   };
 
-  const parseTerm = (): ((x: number) => number) => {
+  const parseTerm = (): Parsed["evaluate"] => {
     let left = parseUnary();
     for (;;) {
       if (eat("*")) {
         const right = parseUnary();
         const previous = left;
-        left = (x) => previous(x) * right(x);
+        left = (v) => previous(v) * right(v);
       } else if (eat("/")) {
         const right = parseUnary();
         const previous = left;
-        left = (x) => previous(x) / right(x);
+        left = (v) => previous(v) / right(v);
       } else if (startsImplicitProduct()) {
         // "2x", "2sin(x)" and "3(x+1)" all mean multiplication.
         const right = parseUnary();
         const previous = left;
-        left = (x) => previous(x) * right(x);
+        left = (v) => previous(v) * right(v);
       } else return left;
     }
   };
@@ -129,26 +156,26 @@ export function compileExpression(source: string, variable = "x"): (x: number) =
     return token.kind === "op" && token.value === "(";
   };
 
-  const parseUnary = (): ((x: number) => number) => {
+  const parseUnary = (): Parsed["evaluate"] => {
     if (eat("-")) {
       const operand = parseUnary();
-      return (x) => -operand(x);
+      return (v) => -operand(v);
     }
     eat("+");
     return parsePower();
   };
 
-  const parsePower = (): ((x: number) => number) => {
+  const parsePower = (): Parsed["evaluate"] => {
     const base = parseAtom();
     if (eat("^")) {
       // Right associative: 2^3^2 is 2^(3^2).
       const exponent = parseUnary();
-      return (x) => base(x) ** exponent(x);
+      return (v) => base(v) ** exponent(v);
     }
     return base;
   };
 
-  const parseAtom = (): ((x: number) => number) => {
+  const parseAtom = (): Parsed["evaluate"] => {
     const token = peek();
     if (!token) throw new ExpressionError("That expression stops early.");
 
@@ -160,7 +187,7 @@ export function compileExpression(source: string, variable = "x"): (x: number) =
     if (token.kind === "name") {
       position += 1;
       const name = token.value.toLowerCase();
-      if (name === variable) return (x) => x;
+      if (known.has(name)) return (v) => valueOf(v, name);
       // Own properties only: "constructor" and "toString" are on every object's
       // prototype, and `in` would happily hand one back as if it were maths.
       if (Object.hasOwn(CONSTANTS, name)) return () => CONSTANTS[name];
@@ -168,9 +195,19 @@ export function compileExpression(source: string, variable = "x"): (x: number) =
         if (!eat("(")) throw new ExpressionError(`${name} needs brackets, like ${name}(x).`);
         const argument = parseExpression();
         if (!eat(")")) throw new ExpressionError(`${name}( is missing its closing bracket.`);
-        return (x) => FUNCTIONS[name](argument(x));
+        const fn = FUNCTIONS[name];
+        if (options.degrees && ANGLE_IN.has(name)) return (v) => fn(argument(v) * DEGREE);
+        if (options.degrees && ANGLE_OUT.has(name)) return (v) => fn(argument(v)) / DEGREE;
+        return (v) => fn(argument(v));
       }
-      throw new ExpressionError(`I don't know "${token.value}". Use ${variable}, a number, or a function like sin.`);
+      // A single letter stands for a value; a word is a mistake, not a variable.
+      if (options.letters && name.length === 1) {
+        if (!variables.includes(name)) variables.push(name);
+        return (v) => valueOf(v, name);
+      }
+      throw new ExpressionError(
+        `I don't know "${token.value}". Use a number, a letter, or a function like sin.`,
+      );
     }
 
     if (eat("(")) {
@@ -182,9 +219,37 @@ export function compileExpression(source: string, variable = "x"): (x: number) =
     throw new ExpressionError(`"${token.value}" doesn't belong there.`);
   };
 
-  const fn = parseExpression();
+  const evaluate = parseExpression();
   if (position < tokens.length) throw new ExpressionError("There's something left over at the end of that expression.");
-  return fn;
+  return { evaluate, variables };
+}
+
+/** A letter's value, looked up without touching anything on the prototype. */
+const valueOf = (values: Values, name: string) => (Object.hasOwn(values, name) ? values[name] : NaN);
+
+/**
+ * Turn an expression into a function of one named variable, for plotting.
+ * Anything else it doesn't recognise is refused, so a misspelled function
+ * doesn't quietly become a variable and draw a flat line.
+ */
+export function compileExpression(source: string, variable = "x"): (x: number) => number {
+  const { evaluate } = parse(source, { known: [variable] });
+  return (x) => evaluate({ [variable]: x });
+}
+
+export interface Formula {
+  /** Letters the expression uses, in the order they first appeared. */
+  variables: string[];
+  evaluate: (values?: Values) => number;
+}
+
+/**
+ * Turn an expression into something that can be worked out, with any single
+ * letters in it treated as values to be supplied.
+ */
+export function compileFormula(source: string, options: { degrees?: boolean } = {}): Formula {
+  const { evaluate, variables } = parse(source, { degrees: options.degrees, letters: true });
+  return { variables, evaluate: (values = {}) => evaluate(values) };
 }
 
 export interface SampleOptions {

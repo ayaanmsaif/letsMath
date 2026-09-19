@@ -1,7 +1,19 @@
 import type { TurnTrigger } from "@letsmath/shared";
-import { ArrowUp, ChevronDown, CircleCheck, LifeBuoy, Lightbulb, PanelLeftClose, Pencil, SquarePen } from "lucide-react";
+import {
+  ArrowUp,
+  ChevronDown,
+  CircleCheck,
+  LifeBuoy,
+  Lightbulb,
+  ListTree,
+  PanelLeftClose,
+  Pencil,
+  SquarePen,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { focusAnnotation } from "../board/ai/applyOps";
+import { useProblems } from "../problems/store";
 import { useChat, type ChatMessage } from "./store";
 import { TutorMarkdown } from "./TutorMarkdown";
 
@@ -25,7 +37,8 @@ export function ChatPanel({ onCollapse }: { onCollapse: () => void }) {
         <span className="text-[15px] font-semibold tracking-tight">letsMath</span>
         <div className="flex items-center gap-1">
           <SpendBadge />
-          <HeaderButton label="New chat" onClick={() => useChat.getState().newSession()}>
+          <Problems />
+          <HeaderButton label="New problem" onClick={() => void useProblems.getState().create()}>
             <SquarePen className="size-4" />
           </HeaderButton>
           <HeaderButton label="Hide chat (Ctrl+\)" onClick={onCollapse}>
@@ -38,6 +51,66 @@ export function ChatPanel({ onCollapse }: { onCollapse: () => void }) {
       <Composer />
     </div>
   );
+}
+
+/** Every problem the student has worked on, newest first. */
+function Problems() {
+  const list = useProblems((s) => s.list);
+  const current = useProblems((s) => s.current);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <HeaderButton label="Problems" onClick={() => setOpen((was) => !was)}>
+        <ListTree className="size-4" />
+      </HeaderButton>
+      {open && (
+        <>
+          {/* A click anywhere else puts the list away. */}
+          <button type="button" aria-label="Close" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-9 z-20 max-h-80 w-72 overflow-y-auto rounded-xl border border-stone-200 bg-white p-1 shadow-lg">
+            {list.map((problem) => (
+              <div
+                key={problem.id}
+                className={`group flex items-center gap-1 rounded-lg px-1 ${problem.id === current ? "bg-stone-100" : ""}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    void useProblems.getState().open(problem.id);
+                    setOpen(false);
+                  }}
+                  className="min-w-0 flex-1 py-2 text-left"
+                >
+                  <span className="block truncate text-[13px] text-stone-800">{problem.title}</span>
+                  <span className="block text-[11px] text-stone-400">{whenever(problem.updatedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete ${problem.title}`}
+                  onClick={() => void useProblems.getState().remove(problem.id)}
+                  className="invisible grid size-7 shrink-0 place-items-center rounded-md text-stone-400 hover:bg-stone-200 hover:text-stone-700 group-hover:visible"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** "just now", "14:32", or a date once it isn't today. */
+function whenever(at: number): string {
+  const when = new Date(at);
+  const minutes = (Date.now() - at) / 60000;
+  if (minutes < 2) return "just now";
+  const today = new Date().toDateString() === when.toDateString();
+  return today
+    ? when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 function HeaderButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {

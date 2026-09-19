@@ -1,7 +1,14 @@
 // The tutor's drawing tools (PLAN.md §4a), built from the shared schemas so the
 // validator and the model see the same contract.
 import type Anthropic from "@anthropic-ai/sdk";
-import { boardOpNames, jsonSchemaFor, type BoardOpName } from "@letsmath/shared";
+import {
+  boardOpNames,
+  checkMathsSchema,
+  CHECK_MATHS_TOOL,
+  jsonSchemaFor,
+  toToolSchema,
+  type BoardOpName,
+} from "@letsmath/shared";
 
 const DESCRIPTIONS: Record<BoardOpName, string> = {
   circle:
@@ -28,16 +35,40 @@ const DESCRIPTIONS: Record<BoardOpName, string> = {
 const NON_STRICT: BoardOpName[] = ["draw_diagram"];
 
 /**
- * The tutor's tools, with input streaming on so each drawing can be applied
- * the moment its call finishes rather than at the end of the reply.
+ * Haiku compiles a smaller grammar than the larger models and refuses this tool
+ * set outright, so for it nothing is strict. The eval found this: it couldn't
+ * get a single answer out of Haiku until strictness gave way. A loose tool is
+ * checked the same way on arrival, and tidied where the fix is obvious.
  */
-export const boardTools: Anthropic.Tool[] = boardOpNames.map((name) => ({
-  name,
-  description: DESCRIPTIONS[name],
-  strict: !NON_STRICT.includes(name),
+const SMALL_GRAMMAR = /haiku/i;
+
+/** Not a drawing: the board works the number out and tells the tutor, which then decides what to say. */
+const checkTool: Anthropic.Tool = {
+  name: CHECK_MATHS_TOOL,
+  description:
+    "Work out a number exactly, or check one, using the board's own arithmetic. Use it before you tell a student that a value is right or wrong, and before you state a value yourself: give expr as the working (5*cos(65)) and claim as the answer being checked (2.7), or leave claim empty to just get the value. It also checks a solution by putting it back in (expr 2*x+5, claim 13, at x=4), and tells whether two expressions are the same ((x+1)^2 against x^2+2*x+1). The answer comes straight back, in the same turn.",
+  strict: true,
   eager_input_streaming: true,
-  input_schema: jsonSchemaFor(name) as Anthropic.Tool["input_schema"],
-}));
+  input_schema: toToolSchema(checkMathsSchema) as Anthropic.Tool["input_schema"],
+};
+
+/**
+ * The tutor's tools, with input streaming on so each drawing can be applied the
+ * moment its call finishes rather than at the end of the reply.
+ */
+export function boardToolsFor(model: string): Anthropic.Tool[] {
+  const loose = SMALL_GRAMMAR.test(model);
+  return [
+    ...boardOpNames.map((name) => ({
+      name,
+      description: DESCRIPTIONS[name],
+      strict: loose ? false : !NON_STRICT.includes(name),
+      eager_input_streaming: true,
+      input_schema: jsonSchemaFor(name) as Anthropic.Tool["input_schema"],
+    })),
+    { ...checkTool, strict: !loose },
+  ];
+}
 
 /** Guidance that belongs with the tools rather than the persona. */
 export const TOOL_GUIDANCE = `## Drawing on the board
@@ -48,5 +79,6 @@ You can draw on the board with the tools provided. They are how you point at thi
 - Target by id whenever you can (g4, #12, or a recognised part like g4.v1 for a corner and g4.s2 for a side). Ids are exact. Only fall back to a box in snapshot pixels when nothing fits.
 - At most three annotations per turn, and only where they help. A tidy board teaches better than a decorated one.
 - To show a graph, use draw_diagram with axes and plots rather than describing the shape of a curve in words. Ask for pi ticks on trig graphs, and equal scales only when the shape must stay true, such as a circle.
+- Never work a number out in your head. Before you tell a student their value is right or wrong, and before you state one yourself, call check_maths — it uses the same exact arithmetic the board draws with. Telling a student their correct work is wrong costs their trust, and you don't get it back.
 - Colours carry meaning: "mistake" for an error, "correct" for work that's right, "attention" to draw the eye, "tutor" for your own writing.
 - You may only change your own annotations. Never try to alter or erase the student's work.`;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { boardOpNames, boardOpSchemas, jsonSchemaFor } from "./boardOps";
+import { boardOpNames, boardOpSchemas, jsonSchemaFor, toToolSchema } from "./boardOps";
+import { checkMathsSchema } from "./checkMaths";
 
 describe("board op schemas", () => {
   it("accepts a well-formed circle call and rejects a malformed one", () => {
@@ -78,8 +79,20 @@ describe("board op schemas", () => {
       }
     };
     for (const name of boardOpNames) walk(jsonSchemaFor(name), name);
+    // The limit is across every tool sent, drawing or not.
+    walk(toToolSchema(checkMathsSchema), "check_maths");
 
     expect(unions.length, `union-typed parameters: ${unions.join(", ")}`).toBeLessThanOrEqual(16);
+  });
+
+  it("keeps the check tool strict, which its small schema can afford", () => {
+    const schema = toToolSchema(checkMathsSchema) as {
+      properties: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+    expect(schema.additionalProperties).toBe(false);
+    expect([...(schema.required ?? [])].sort()).toEqual(Object.keys(schema.properties).sort());
   });
 
   // The tutor's real input for "draw a unit circle and mark 30 degrees with its
