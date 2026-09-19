@@ -27,6 +27,29 @@ const LISTS = [
 /** Text fields inside those lists, which end up written on the board. */
 const WRITTEN = ["text", "label", "xLabel", "yLabel", "expr"] as const;
 
+/**
+ * Fields an entry may leave out, and what they mean when missing. A midpoint has
+ * no angle and a circle given a point on it has no radius, so the tutor drops
+ * them — and the whole diagram was being refused over it, at the cost of a
+ * round each time.
+ *
+ * Only fields with an obvious meaning when absent are here. A point's
+ * coordinates, a construction's `of`, a circle's centre and a segment's ends all
+ * carry the maths: filling those in would draw something quietly wrong, so they
+ * are left to be refused.
+ */
+const WHEN_ABSENT: Record<string, Record<string, string | number | boolean>> = {
+  axes: { xLabel: "", yLabel: "", xStep: 0, yStep: 0, piTicks: false, grid: false, equalScale: false },
+  plots: { from: 0, to: 0, label: "", attention: false },
+  constructions: { angle: 0, distance: 0 },
+  circles: { through: "", radius: 0, attention: false },
+  segments: { dashed: false },
+  arcs: { attention: false },
+  angles: { text: "", rightAngle: false },
+  labels: { text: "", attention: false },
+  markedPoints: { text: "", dot: false },
+};
+
 /** Kept in step with schema.ts, where a test checks that tidied input passes. */
 const DEFAULT_WIDTH = 360;
 const MAX_NEAR = 40;
@@ -57,6 +80,9 @@ export function tidyDiagramInput(raw: unknown): unknown {
       const entry = { ...(item as Record<string, unknown>) };
       for (const field of WRITTEN) {
         if (typeof entry[field] === "string") entry[field] = strip(entry[field] as string);
+      }
+      for (const [field, absent] of Object.entries(WHEN_ABSENT[list] ?? {})) {
+        if (typeof entry[field] !== typeof absent) entry[field] = absent;
       }
       return entry;
     });

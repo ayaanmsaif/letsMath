@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:api": "npm run check:api -w @letsmath/server",
-    "check:tools": "npm run check:tools -w @letsmath/server"
+    "check:tools": "npm run check:tools -w @letsmath/server",
+    "eval": "npm run eval -w @letsmath/server --"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

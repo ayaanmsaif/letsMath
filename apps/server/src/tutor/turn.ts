@@ -22,8 +22,9 @@ import { BudgetExceededError, budgetStatus, reserve } from "./ledger";
 import { mockReply } from "./mock";
 import { TUTOR_SYSTEM_PROMPT } from "./prompt";
 import { createResolver, OpError } from "./resolve";
+import { routeEffort, type Effort } from "./routing";
 import { getSession, type TutorSession } from "./session";
-import { boardTools, TOOL_GUIDANCE } from "./tools";
+import { boardToolsFor, TOOL_GUIDANCE } from "./tools";
 
 /** Replies are a few sentences plus a few tool calls. Raised in M4 for draw_svg. */
 const MAX_TOKENS = 4096;
@@ -43,6 +44,13 @@ const MAX_ROUNDS = 3;
  * again just costs another request.
  */
 const MAX_REFUSAL_RETRIES = 1;
+
+/**
+ * Adaptive thinking and the effort setting belong to the larger models. Haiku
+ * 4.5 refuses the request outright rather than ignoring them, which is how the
+ * eval found this: every case failed with a 400 before generating anything.
+ */
+const TUNEABLE = /^claude-(opus|sonnet)-[5-9]/;
 
 const SYSTEM_PROMPT = `${TUTOR_SYSTEM_PROMPT}\n\n${TOOL_GUIDANCE}`;
 
@@ -162,6 +170,7 @@ async function requestReply(
   messages: Anthropic.MessageParam[],
   resolve: ReturnType<typeof createResolver>,
   estimatedInput: number,
+  effort: Effort,
   emit: Emit,
   signal: AbortSignal,
   textPrefix: string,
@@ -182,11 +191,10 @@ async function requestReply(
       model,
       max_tokens: MAX_TOKENS,
       system: SYSTEM_PROMPT,
-      tools: boardTools,
+      tools: boardToolsFor(model),
       // Caches everything up to the newest message, so each turn re-reads history at 0.1× price.
       cache_control: { type: "ephemeral" },
-      thinking: { type: "adaptive" },
-      output_config: { effort: config.tutorEffort as "low" | "medium" | "high" },
+      ...(TUNEABLE.test(model) ? { thinking: { type: "adaptive" as const }, output_config: { effort } } : {}),
       messages,
     },
     { signal },
@@ -291,16 +299,32 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
     return `a${session.annotationCount}`;
   });
 
+  // Low is the floor; interpretation and teaching get more (§5). A fixed
+  // TUTOR_EFFORT pins every turn, which is how the eval compares levels.
+  const chosenEffort: Effort =
+    config.tutorEffort === "auto" ? routeEffort(request) : (config.tutorEffort as Effort);
+
   const started = Date.now();
   const rounds: Round[] = [];
   let retries = 0;
+
+  // Time to the student seeing anything, across the whole turn. A turn that
+  // works a number out first says nothing in its opening round, and timing only
+  // that round would report no answer at all.
+  let firstWordAt: number | undefined;
+  const watched: Emit = async (event) => {
+    if (event.type === "text" && firstWordAt === undefined) firstWordAt = Date.now();
+    await emit(event);
+  };
   let messages: Anthropic.MessageParam[] = [...session.messages, { role: "user", content: userContent(session, request) }];
   let estimatedInput = session.lastInputTokens + newTokens + PROMPT_ALLOWANCE_TOKENS;
 
   for (let attempt = 0; attempt < MAX_ROUNDS; attempt++) {
     // A break only reads as a break if something was said before it.
     const prefix = rounds.some((earlier) => earlier.firstWordMs !== undefined) ? "\n\n" : "";
-    const round = await requestReply(session, messages, resolve, estimatedInput, emit, signal, prefix);
+    // A turn that has already had something refused is worth more thought.
+    const effort: Effort = retries > 0 ? "medium" : chosenEffort;
+    const round = await requestReply(session, messages, resolve, estimatedInput, effort, watched, signal, prefix);
     if (!round) break;
     rounds.push(round);
 
@@ -353,12 +377,12 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
   const total = (pick: (usage: Anthropic.Usage) => number | null | undefined) =>
     rounds.reduce((sum, round) => sum + (pick(round.message.usage) ?? 0), 0);
   const costUsd = rounds.reduce((sum, round) => sum + round.costUsd, 0);
-  const firstWordMs = rounds[0].firstWordMs;
+  const firstWordMs = firstWordAt === undefined ? undefined : firstWordAt - started;
   const status = await budgetStatus();
   // Every paid turn is logged, so spend is always attributable to a session.
   console.log(
     `[turn] session=${session.id.slice(0, 8)} trigger=${request.trigger} model=${last.message.model} ` +
-      `rounds=${rounds.length} firstWord=${firstWordMs ?? "-"}ms done=${Date.now() - started}ms ` +
+      `effort=${chosenEffort} rounds=${rounds.length} firstWord=${firstWordMs ?? "-"}ms done=${Date.now() - started}ms ` +
       `cost=$${costUsd.toFixed(4)} total=$${status.spentUsd.toFixed(4)} of $${status.budgetUsd.toFixed(2)}`,
   );
   await emit({

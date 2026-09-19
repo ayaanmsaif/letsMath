@@ -417,8 +417,12 @@ export function compileDiagram(spec: DiagramSpec, placement: DiagramPlacement, p
 
   const at = (name: string, role: string): Vec2 => {
     const point = points.get(name);
-    if (!point) throw new DiagramError(`No point called ${name} for the ${role}. Defined: ${[...points.keys()].join(", ")}.`);
-    return point;
+    if (point) return point;
+    // A position given where a name belongs is a reasonable thing to mean:
+    // "(1.5708, 1)" is the top of the sine curve, and there's no name for it.
+    const written = /^\(?\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)?$/.exec(name);
+    if (written) return [Number(written[1]), Number(written[2])];
+    throw new DiagramError(`No point called ${name} for the ${role}. Defined: ${[...points.keys()].join(", ")}.`);
   };
 
   const circles = spec.circles.map((circle) => {

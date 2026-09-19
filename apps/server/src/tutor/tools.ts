@@ -35,28 +35,40 @@ const DESCRIPTIONS: Record<BoardOpName, string> = {
 const NON_STRICT: BoardOpName[] = ["draw_diagram"];
 
 /**
- * The tutor's tools, with input streaming on so each drawing can be applied
- * the moment its call finishes rather than at the end of the reply.
+ * Haiku compiles a smaller grammar than the larger models and refuses this tool
+ * set outright, so for it nothing is strict. The eval found this: it couldn't
+ * get a single answer out of Haiku until strictness gave way. A loose tool is
+ * checked the same way on arrival, and tidied where the fix is obvious.
  */
-export const boardTools: Anthropic.Tool[] = [
-  ...boardOpNames.map((name) => ({
-    name,
-    description: DESCRIPTIONS[name],
-    strict: !NON_STRICT.includes(name),
-    eager_input_streaming: true,
-    input_schema: jsonSchemaFor(name) as Anthropic.Tool["input_schema"],
-  })),
-  {
-    // Not a drawing: the board works the number out and tells the tutor, which
-    // then decides what to say. Its schema is small enough to stay strict.
-    name: CHECK_MATHS_TOOL,
-    description:
-      "Work out a number exactly, or check one, using the board's own arithmetic. Use it before you tell a student that a value is right or wrong, and before you state a value yourself: give expr as the working (5*cos(65)) and claim as the answer being checked (2.7), or leave claim empty to just get the value. It also checks a solution by putting it back in (expr 2*x+5, claim 13, at x=4), and tells whether two expressions are the same ((x+1)^2 against x^2+2*x+1). The answer comes straight back, in the same turn.",
-    strict: true,
-    eager_input_streaming: true,
-    input_schema: toToolSchema(checkMathsSchema) as Anthropic.Tool["input_schema"],
-  },
-];
+const SMALL_GRAMMAR = /haiku/i;
+
+/** Not a drawing: the board works the number out and tells the tutor, which then decides what to say. */
+const checkTool: Anthropic.Tool = {
+  name: CHECK_MATHS_TOOL,
+  description:
+    "Work out a number exactly, or check one, using the board's own arithmetic. Use it before you tell a student that a value is right or wrong, and before you state a value yourself: give expr as the working (5*cos(65)) and claim as the answer being checked (2.7), or leave claim empty to just get the value. It also checks a solution by putting it back in (expr 2*x+5, claim 13, at x=4), and tells whether two expressions are the same ((x+1)^2 against x^2+2*x+1). The answer comes straight back, in the same turn.",
+  strict: true,
+  eager_input_streaming: true,
+  input_schema: toToolSchema(checkMathsSchema) as Anthropic.Tool["input_schema"],
+};
+
+/**
+ * The tutor's tools, with input streaming on so each drawing can be applied the
+ * moment its call finishes rather than at the end of the reply.
+ */
+export function boardToolsFor(model: string): Anthropic.Tool[] {
+  const loose = SMALL_GRAMMAR.test(model);
+  return [
+    ...boardOpNames.map((name) => ({
+      name,
+      description: DESCRIPTIONS[name],
+      strict: loose ? false : !NON_STRICT.includes(name),
+      eager_input_streaming: true,
+      input_schema: jsonSchemaFor(name) as Anthropic.Tool["input_schema"],
+    })),
+    { ...checkTool, strict: !loose },
+  ];
+}
 
 /** Guidance that belongs with the tools rather than the persona. */
 export const TOOL_GUIDANCE = `## Drawing on the board

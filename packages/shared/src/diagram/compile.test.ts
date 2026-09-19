@@ -497,6 +497,20 @@ describe("compileDiagram: circles and constructions", () => {
     expect(parts.some((p) => p.id === "d1.ynum1")).toBe(true);
   });
 
+  // Seen in the eval: asked to mark the top of a sine curve, the tutor gave the
+  // position rather than a name, because that point has no name to give.
+  it("takes a position written where a point's name belongs", () => {
+    const { parts } = compile({
+      ...empty,
+      points: [{ name: "A", x: 0, y: 0 }],
+      segments: [{ from: "A", to: "(3, 4)", dashed: false }],
+    });
+    const line = stroke(parts, "d1.A(3, 4)");
+    // The far end is up and to the right of A, in the ratio 3 to 4.
+    const [from, to] = line.points;
+    expect((to[0] - from[0]) / (from[1] - to[1])).toBeCloseTo(3 / 4, 6);
+  });
+
   it("explains a circle, arc or construction it can't draw", () => {
     expect(() => compile({ ...unitCircle, circles: [{ centre: "O", through: "", radius: 0, attention: false }] })).toThrow(
       /radius above 0/,
@@ -506,6 +520,6 @@ describe("compileDiagram: circles and constructions", () => {
     );
     expect(() =>
       compile({ ...unitCircle, constructions: [{ name: "P", kind: "polar", of: ["Z"], angle: 30, distance: 1 }] }),
-    ).toThrow(/Z, which isn't defined before it/);
+    ).toThrow(/Z, which isn't defined/);
   });
 });

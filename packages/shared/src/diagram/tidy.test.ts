@@ -99,6 +99,24 @@ describe("tidying what the tutor sent", () => {
     expect(checkMaths(checkMathsSchema.parse(tidied))).toMatch(/is right/);
   });
 
+  // Seen in the eval, repeatedly: a midpoint has no angle and no distance, so
+  // the tutor leaves them out, and the whole diagram was refused for it.
+  it("fills in the fields an entry has no reason to give", () => {
+    const result = parsed({
+      points: [
+        { name: "A", x: 0, y: 0 },
+        { name: "B", x: 4, y: 0 },
+      ],
+      constructions: [{ name: "M", kind: "midpoint", of: ["A", "B"] }],
+      circles: [{ centre: "M", through: "A" }],
+      markedPoints: [{ at: "M" }],
+    });
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data?.constructions[0]).toMatchObject({ angle: 0, distance: 0 });
+    expect(result.data?.circles[0]).toMatchObject({ radius: 0, attention: false });
+    expect(result.data?.markedPoints[0]).toMatchObject({ text: "", dot: false });
+  });
+
   it("leaves anything that could make the maths wrong to be refused", () => {
     // A circle with no centre is not a tidying problem; it's a broken drawing.
     expect(parsed({ points: [{ name: "O", x: 0, y: 0 }], circles: [{ radius: 10 }] }).success).toBe(false);

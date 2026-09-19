@@ -9,7 +9,11 @@ if (existsSync(envPath)) process.loadEnvFile(envPath);
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   tutorModel: process.env.TUTOR_MODEL ?? "claude-sonnet-5",
-  /** How much thinking the tutor does before replying: low | medium | high. */
+  /**
+   * How much thinking the tutor does before replying: low | medium | high.
+   * "auto" picks per turn from `routing.ts`, which the eval measured as no
+   * better than plain medium, so medium is what ships.
+   */
   tutorEffort: process.env.TUTOR_EFFORT ?? "medium",
   watchModel: process.env.WATCH_MODEL ?? "claude-haiku-4-5",
   sessionBudgetUsd: Number(process.env.SESSION_BUDGET_USD ?? 1),
