@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   boardOpNames,
+  checkMaths,
+  checkMathsSchema,
+  CHECK_MATHS_TOOL,
   countImageTokens,
+  ExpressionError,
+  tidyCheckInput,
   type BoardOpName,
   type ResolvedOp,
   type TurnEvent,
@@ -25,11 +30,19 @@ const MAX_TOKENS = 4096;
 /** Rough allowance for the system prompt, tools, and message framing when estimating cost. */
 const PROMPT_ALLOWANCE_TOKENS = 3500;
 /**
- * A refused drawing is sent straight back once, so the tutor fixes it in the
- * same turn (PLAN.md §4). One retry covers a slip; a second failure is more
- * likely a misunderstanding, and is left for the student's next message.
+ * A turn can take more than one round: a refused drawing goes straight back so
+ * the tutor fixes it there and then (PLAN.md §4), and an arithmetic check has to
+ * be answered before the tutor can say anything about the number. Three rounds
+ * covers "check, then draw, then fix the drawing"; past that it's a
+ * misunderstanding, and the rest waits for the student's next message.
  */
-const MAX_RETRIES = 1;
+const MAX_ROUNDS = 3;
+/**
+ * A refused drawing gets one retry, however many rounds a turn runs to. A slip
+ * it can fix, it fixes first time; twice means it has misunderstood, and trying
+ * again just costs another request.
+ */
+const MAX_REFUSAL_RETRIES = 1;
 
 const SYSTEM_PROMPT = `${TUTOR_SYSTEM_PROMPT}\n\n${TOOL_GUIDANCE}`;
 
@@ -133,6 +146,8 @@ function retryContent(results: Anthropic.ToolResultBlockParam[]): Anthropic.Tool
 interface Round {
   message: Anthropic.Message;
   toolResults: Anthropic.ToolResultBlockParam[];
+  /** Questions the tutor asked the board, which it's now waiting on. */
+  answers: number;
   costUsd: number;
   firstWordMs: number | undefined;
 }
@@ -190,11 +205,30 @@ async function requestReply(
   // Apply each drawing the moment its call finishes streaming, rather than at the end of the reply.
   const toolResults: Anthropic.ToolResultBlockParam[] = [];
   const applied = new Set<number>();
+  let answers = 0;
   const applyFinishedTools = async () => {
     const blocks = stream.currentMessage?.content ?? [];
     for (const [index, block] of blocks.entries()) {
       if (block.type !== "tool_use" || applied.has(index)) continue;
       applied.add(index);
+
+      // Working a number out isn't a drawing: the answer goes back to the tutor,
+      // which then decides what to say about it.
+      if (block.name === CHECK_MATHS_TOOL) {
+        try {
+          const parsed = checkMathsSchema.safeParse(tidyCheckInput(block.input));
+          if (!parsed.success) {
+            throw new ExpressionError(parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
+          }
+          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: checkMaths(parsed.data) });
+          answers += 1;
+        } catch (err) {
+          const why = err instanceof ExpressionError ? err.message : "I couldn't work that out.";
+          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: why, is_error: true });
+          void recordToolError(session.id, block.name, block.input, err);
+        }
+        continue;
+      }
 
       let op: ResolvedOp;
       try {
@@ -221,7 +255,7 @@ async function requestReply(
     const message = await stream.finalMessage();
     await applyFinishedTools();
     const entry = await slot.settle("tutor", message.model, message.usage);
-    return { message, toolResults, costUsd: entry?.costUsd ?? 0, firstWordMs };
+    return { message, toolResults, answers, costUsd: entry?.costUsd ?? 0, firstWordMs };
   } catch (err) {
     // Record whatever was billed before the stream ended; an API error before generation bills nothing.
     const partial: Usage | undefined = stream.currentMessage?.usage;
@@ -259,11 +293,14 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
 
   const started = Date.now();
   const rounds: Round[] = [];
+  let retries = 0;
   let messages: Anthropic.MessageParam[] = [...session.messages, { role: "user", content: userContent(session, request) }];
   let estimatedInput = session.lastInputTokens + newTokens + PROMPT_ALLOWANCE_TOKENS;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const round = await requestReply(session, messages, resolve, estimatedInput, emit, signal, attempt > 0 ? "\n\n" : "");
+  for (let attempt = 0; attempt < MAX_ROUNDS; attempt++) {
+    // A break only reads as a break if something was said before it.
+    const prefix = rounds.some((earlier) => earlier.firstWordMs !== undefined) ? "\n\n" : "";
+    const round = await requestReply(session, messages, resolve, estimatedInput, emit, signal, prefix);
     if (!round) break;
     rounds.push(round);
 
@@ -277,15 +314,34 @@ async function runClaudeTurn(session: TutorSession, request: TurnRequest, emit: 
       (message.usage.cache_read_input_tokens ?? 0) +
       (message.usage.cache_creation_input_tokens ?? 0);
 
+    if (message.stop_reason === "refusal" || signal.aborted) break;
     const refused = toolResults.some((result) => result.is_error);
-    if (!refused || message.stop_reason === "refusal" || signal.aborted) break;
-    if (attempt === MAX_RETRIES) {
-      // Still refused after a retry: say so, rather than leave "here it is" over an empty board.
-      await emit({ type: "text", text: "\n\n_(That drawing didn't work. Ask me to try it another way.)_" });
+    const owed = round.answers > 0;
+    // Either something was refused, or the tutor is waiting on a number.
+    if (!refused && !owed) break;
+
+    // A tutor that has said nothing yet gets another round even after a tool has
+    // failed twice: being left in silence is worse for the student than the cost
+    // of one more request, and it can always answer in words instead.
+    const spoke = rounds.some((earlier) => earlier.firstWordMs !== undefined);
+    const outOfRounds = attempt === MAX_ROUNDS - 1;
+    const triedEnough = refused && !owed && retries >= MAX_REFUSAL_RETRIES && spoke;
+    if (outOfRounds || triedEnough) {
+      if (refused) {
+        await emit({
+          type: "text",
+          text: spoke
+            ? "\n\n_(That didn't work. Ask me to try it another way.)_"
+            : "_(I couldn't work that out just now. Ask me to try it another way.)_",
+        });
+      }
       break;
     }
+    if (refused) retries += 1;
 
-    console.log(`[turn] session=${session.id.slice(0, 8)} a drawing was refused; sending it straight back`);
+    console.log(
+      `[turn] session=${session.id.slice(0, 8)} ${refused ? "a drawing was refused" : "the tutor asked for a number"}; going straight back`,
+    );
     messages = [...session.messages, { role: "user", content: retryContent(toolResults) }];
     estimatedInput = session.lastInputTokens + message.usage.output_tokens + PROMPT_ALLOWANCE_TOKENS;
   }

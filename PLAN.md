@@ -186,12 +186,9 @@ The history is strictly append-only (thinking blocks kept verbatim).
   - a per-session $ counter from `usage`; `SESSION_BUDGET_USD` pauses watch mode when it's exceeded;
   - a total development spend ledger; `DEV_BUDGET_USD` (§12) blocks Claude calls once the testing budget is used up.
 
-**Watch mode** (the AI sees you work without being asked; `/api/tutor/watch`):
-- **Trigger:** 3s after the pen goes idle, only if there's new ink, at most once every 15s.
-- **Triage call:** a cheap structured-output request (`WATCH_MODEL`, default `claude-haiku-4-5`) with a crop plus the digest. It returns `{status: on_track|slip|error|stuck|finished|unclear, confidence, target_id, reason}`.
-- **Escalation:** only `error` with confidence ≥0.7, or `stuck` (no progress for 45s or more), becomes a full tutor turn, and it opens with a gentle nudge.
-- **Limits:** at most 1 unprompted intervention per 60s.
-- **Student control:** Off / Gentle / Active.
+**Working a number out** (`check_maths`). Everywhere else the model is kept away from arithmetic: constructions place points, the evaluator draws curves. Marking was the hole left, and the tutor was judging a student's numbers by mental arithmetic — weakest exactly where trigonometry lives, in decimals, degrees against radians, and rounding. It now asks the board, which answers with the same evaluator that draws the graphs, and the answer comes back within the same turn. It also checks a claimed solution by substitution, and tells whether two expressions are the same by trying values. **Tolerance comes from how precisely the claim was written**, so a student who rounds 2.1131 to 2.11 is right: telling a student their correct work is wrong costs their trust, and that is not recoverable.
+
+**Watch mode: dropped.** The plan was for the tutor to watch and intervene unasked. A real tutor lets a student attempt the work and waits to be asked, and productive struggle is where the learning happens; interrupting at the first hesitation prevents the very thing the tutor is for. It was also about **a third of a session's running cost**, spent mostly to conclude that nothing was wrong. "Check my work" is the student-initiated form of the same thing and is worth more. If the early-error case ever needs catching — a slip in line one that the next five lines are built on — the respectful form is a quiet marker the student can tap, not the tutor speaking. `look_closer` survives from that milestone: that one is the tutor asking for a closer look at handwriting it can't read, which makes it more accurate rather than more intrusive.
 
 ## 6. UI (modern, minimal)
 
@@ -216,7 +213,7 @@ The history is strictly append-only (thinking blocks kept verbatim).
 - **Board chrome:** undo/redo top-left. Zoom −/%/+, fit (`Shift+1`), and reset (`Shift+0`) bottom-right. Background picker: blank, dots, grid, lined. Show/hide and clear tutor drawings. Clear board (with confirm).
 - **"Tidy shape":** available from the context menu, or suggested by the tutor. It swaps a recognised squiggly shape (§3 item 5) for a clean polygon or ellipse. It's a single undoable action.
 - **Input handling:** Pointer Events with `getCoalescedEvents()`, pointer capture, `touch-action:none`. Once a pen is detected, touch only pans and pinch-zooms (palm rejection).
-- **Autosave:** IndexedDB per session.
+- **Problems:** one problem is one board and the conversation about it, saved together in IndexedDB under the problem's id — which is also the tutor's session id, so reopening can pick up where it left off. The header lists them newest first, titled from the first thing the student asked, with **New problem** beside it. Before this, a refresh brought the board back but not the conversation, and the tutor reappeared with no memory of work it had just been discussing.
 - **Dev inspector** (`?debug=1`): the last snapshot with the model's coordinates and snapped/placed results overlaid (including detected corners and sides), the digest, raw tool JSON (including diagram specs), validation errors, and tokens and $ per turn. It has a **"Save as eval fixture"** button.
 
 ## 6b. Smoothness targets (measured, not hoped for)
@@ -308,7 +305,8 @@ letsMath/
   - build-order animation;
   - **"Tidy shape"**;
   - **ends with a polish pass** against §6b: AI timing targets, animation feel, and never blocking.
-- **M5 Watch mode + look_closer:** idle and diff tracking, triage endpoint, intervention policy, and the crop round-trip.
+- **M5 look_closer:** the crop round-trip, for handwriting the tutor can't read. (Watch mode was dropped — see §5.)
+- **Done alongside M4:** the arithmetic check (§5), and problems that persist with their conversations (§6). Pictures can be dropped, pasted or photographed onto the board, and the tutor reads them from the snapshot.
 - **M6 Eval + cost tuning:**
   - Annotation fixtures (planted trig errors → expected target group).
   - **Diagram prompts:** "right triangle with 35° and hypotenuse 10, label the opposite side x", "sketch y=sin x and y=cos x for 0–2π and mark where they meet", "unit circle with 30°, 45°, 60° and their coordinates", "ladder 5m against a wall at 70°", "bearing of 060° from A to B".
@@ -386,7 +384,8 @@ This is why diagrams are preferred and `draw_svg` is the catch-all. A few diagra
   4. Ask **"draw a unit circle and mark 30° with its coordinates"**. The diagram builds in free space in construction order, and you can move and erase it.
   5. Follow up with "highlight the sine". The tutor targets `d1.*` via `update_diagram`/`highlight`.
   6. Ask for "a ladder leaning against a wall at 70°". It uses `draw_diagram` or `draw_svg` and renders cleanly.
-  7. Toggle watch mode and confirm it stays silent while you're on track.
+  7. Write `x = 5 cos 65 = 2.7` and ask for it to be checked. The tutor works the value out with `check_maths` before judging it, marks the line wrong, and writes 2.11. Rounding it to 2.11 yourself is accepted.
+  8. Reload the page: the board and the conversation both come back. Start a new problem, then switch between them from the header.
 - **Browser automation** (Playwright via the `run` skill) captures screenshots of tool states, an annotated turn, and a diagram turn.
 - **Eval:** `npm run eval -- --model claude-sonnet-5 --effort low` runs batched. It prints the estimated cost and asks before spending, then reports annotation hit rate, diagram correctness and judge scores, and $/turn.
 

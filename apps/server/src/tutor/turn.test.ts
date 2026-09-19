@@ -84,6 +84,12 @@ async function runWith(replies: { content: Block[]; failWith?: Error }[]) {
 }
 
 const refused = (id: string): Block => ({ type: "tool_use", id, name: "draw_diagram", input: {} });
+const asked = (id: string): Block => ({
+  type: "tool_use",
+  id,
+  name: "check_maths",
+  input: { expr: "5*cos(65)", claim: "2.7", at: "", degrees: true },
+});
 const drawn = (id: string): Block => ({ type: "tool_use", id, name: "erase_drawings", input: { ids: ["all"] } });
 
 /** Every tool_use in the history must be answered by the very next user message, or the API refuses the session. */
@@ -138,6 +144,25 @@ describe("a tutor turn", () => {
     expect(usage).toHaveLength(1);
     expect(usage[0].type === "usage" && usage[0].usage.outputTokens).toBe(200);
     expect(events.filter((e) => e.type === "done")).toHaveLength(1);
+  });
+
+  // The tutor has to know the number before it can say anything about it, so the
+  // answer can't wait for the student's next message the way a drawing's can.
+  it("answers a number the tutor asks for, in the same turn", async () => {
+    const { run, claude, session } = await runWith([
+      { content: [asked("c1")] },
+      { content: [{ type: "text", text: "Not quite — it comes to 2.11." }] },
+    ]);
+    await run;
+
+    expect(claude.requests).toHaveLength(2);
+    const answer = claude.requests[1].messages.at(-1)!.content as Anthropic.ToolResultBlockParam[];
+    expect(answer[0].tool_use_id).toBe("c1");
+    expect(answer[0].is_error).toBeFalsy();
+    // Worked out exactly, not in the model's head: 5cos65° is 2.113, so 2.7 is wrong.
+    expect(String(answer[0].content)).toMatch(/2\.113/);
+    expect(String(answer[0].content)).toMatch(/wrong/);
+    expectHistoryWhole(session().messages, session().pendingToolResults);
   });
 
   it("gives up after one retry, and says so instead of leaving an empty board", async () => {
